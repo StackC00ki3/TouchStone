@@ -189,6 +189,8 @@ def safe_split_lines(text: str) -> List[str]:
 
 
 def main(page: ft.Page) -> None:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
     page.title = "NetHack EN -> merged ZH matcher"
     page.theme_mode = ft.ThemeMode.DARK
     page.padding = 10
@@ -202,8 +204,8 @@ def main(page: ft.Page) -> None:
     }
 
     state = {
-        "a_dir": r"D:\CodingFun\CProjects\TouchStone\Nethack",
-        "b_dir": r"D:\\Download\\Compressed\\NetHack-cn-NetHack-cn\\NetHack",
+        "a_src_dir": r"D:\CodingFun\CProjects\TouchStone\Nethack",
+        "b_src_dir": r"D:\\Download\\Compressed\\NetHack-cn-NetHack-cn\\NetHack",
         "a_path": "",
         "b_path": "",
         "out_path": "",
@@ -218,8 +220,8 @@ def main(page: ft.Page) -> None:
         "cursor": 0,
     }
 
-    a_dir_input = ft.TextField(label="A 英文目录", value=state["a_dir"], expand=True)
-    b_dir_input = ft.TextField(label="B 中文目录", value=state["b_dir"], expand=True)
+    a_dir_input = ft.TextField(label="A 源码目录", value=state["a_src_dir"], expand=True)
+    b_dir_input = ft.TextField(label="B 源码目录", value=state["b_src_dir"], expand=True)
     mode_filter = ft.Dropdown(
         label="函数名",
         width=220,
@@ -292,7 +294,7 @@ def main(page: ft.Page) -> None:
         current_en.value = "\n".join(item["en"])
 
         if item["file"] and item["line"] > 0:
-            lines, start_line = read_source_lines(state["a_dir"], item["file"], item["line"])
+            lines, start_line = read_source_lines(state["a_src_dir"], item["file"], item["line"])
             current_source.spans = make_source_spans(lines, start_line, item["line"])
         else:
             current_source.spans = [
@@ -393,7 +395,7 @@ def main(page: ft.Page) -> None:
                 no_wrap=True,
             )
             if m["file"] and m["line"] > 0:
-                lines, start_line = read_source_lines(state["b_dir"], m["file"], m["line"])
+                lines, start_line = read_source_lines(state["b_src_dir"], m["file"], m["line"])
                 src_text.spans = make_source_spans(lines, start_line, m["line"])
             else:
                 src_text.spans = [
@@ -478,11 +480,20 @@ def main(page: ft.Page) -> None:
         page.update()
 
     def on_load(_):
-        a_dir = (a_dir_input.value or "").strip().strip('"')
-        b_dir = (b_dir_input.value or "").strip().strip('"')
-        a_json = os.path.join(a_dir, "nethack_strings.json")
-        b_json = os.path.join(b_dir, "nethack_strings_merged.json")
-        out_json = os.path.join(a_dir, "nethack_strings_a_modified.json")
+        a_src_dir = (a_dir_input.value or "").strip().strip('"')
+        b_src_dir = (b_dir_input.value or "").strip().strip('"')
+        a_json = os.path.join(base_dir, "nethack_strings.json")
+        b_json = os.path.join(base_dir, "nethack_strings_merged.json")
+        out_json = os.path.join(base_dir, "nethack_strings_a_modified.json")
+
+        if a_src_dir and not os.path.isdir(a_src_dir):
+            status.value = f"A 源码目录不存在: {a_src_dir}"
+            page.update()
+            return
+        if b_src_dir and not os.path.isdir(b_src_dir):
+            status.value = f"B 源码目录不存在: {b_src_dir}"
+            page.update()
+            return
 
         missing = []
         if not os.path.isfile(a_json):
@@ -502,8 +513,8 @@ def main(page: ft.Page) -> None:
             page.update()
             return
 
-        state["a_dir"] = a_dir
-        state["b_dir"] = b_dir
+        state["a_src_dir"] = a_src_dir
+        state["b_src_dir"] = b_src_dir
         state["a_path"] = a_json
         state["b_path"] = b_json
         state["out_path"] = out_json
@@ -535,7 +546,8 @@ def main(page: ft.Page) -> None:
         refresh_filter()
         status.value = (
             f"加载完成 | A entries={len(state['a_entries'])} | "
-            f"merged entries={len(state['b_entries'])} | 输出文件={state['out_path']}"
+            f"merged entries={len(state['b_entries'])} | 输出文件={state['out_path']} | "
+            f"JSON目录={base_dir}"
         )
         refresh_current_panel()
 

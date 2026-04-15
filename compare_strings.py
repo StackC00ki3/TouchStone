@@ -274,6 +274,10 @@ def main(page: ft.Page):
 
                 item = copy.deepcopy(left_entry)
                 item["zh"] = normalize_text_list(right_entry.get("zh"))
+                # 导出时使用 B 的源码定位信息。
+                for meta_key in ("file", "line", "func", "occ"):
+                    if meta_key in right_entry:
+                        item[meta_key] = right_entry.get(meta_key)
 
                 left_args = normalize_args(item.get("args"))
                 right_args_zh = entry_args_by_idx(right_entry, "zh")
