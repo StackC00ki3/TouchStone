@@ -17,6 +17,61 @@ def load_json(path):
         return json.load(f)
 
 
+def normalize_text_list(value):
+    if not isinstance(value, list):
+        return []
+    return ["" if x is None else str(x) for x in value]
+
+
+def normalize_args(value):
+    if not isinstance(value, list):
+        return []
+    return [x for x in value if isinstance(x, dict)]
+
+
+def entry_args_by_idx(entry, lang_key):
+    out = {}
+    for arg in normalize_args(entry.get("args")):
+        idx = arg.get("idx")
+        if idx is None:
+            continue
+        out[int(idx)] = normalize_text_list(arg.get(lang_key))
+    return out
+
+
+def format_entry_text(entry, lang_key):
+    main_lines = normalize_text_list(entry.get(lang_key))
+    args_map = entry_args_by_idx(entry, lang_key)
+    text_parts = []
+
+    if main_lines:
+        text_parts.append("MAIN:")
+        text_parts.extend(main_lines)
+
+    if args_map:
+        if text_parts:
+            text_parts.append("")
+        text_parts.append("ARGS:")
+        for idx in sorted(args_map):
+            variants = args_map[idx]
+            text_parts.append(f"[{idx}] {' | '.join(variants)}")
+
+    return "\n".join(text_parts)
+
+
+def entries_differ(entry_a, entry_b):
+    if normalize_text_list(entry_a.get("en")) != normalize_text_list(entry_b.get("zh")):
+        return True
+
+    args_a = entry_args_by_idx(entry_a, "en")
+    args_b = entry_args_by_idx(entry_b, "zh")
+    all_idx = set(args_a.keys()) | set(args_b.keys())
+    for idx in all_idx:
+        if args_a.get(idx, []) != args_b.get(idx, []):
+            return True
+    return False
+
+
 def read_source_lines(base_path, rel_file, target_line):
     """读取源文件中 target_line 附近的行，返回 (lines, start_line)"""
     # rel_file 可能用反斜杠
@@ -118,7 +173,7 @@ def main(page: ft.Page):
         keys_b = data_b[current_mode]
         all_common = [k for k in keys_a if k in keys_b]
         if filter_mode == "diff_only":
-            common_keys = [k for k in all_common if keys_a[k].get("en") != keys_b[k].get("zh")]
+            common_keys = [k for k in all_common if entries_differ(keys_a[k], keys_b[k])]
         else:
             common_keys = all_common
         current_index = 0
@@ -143,10 +198,10 @@ def main(page: ft.Page):
         key_label.value = f"Key: {k}"
         info_a.value = f"{entry_a['file']}:{entry_a['line']}  func={entry_a.get('func','')}  occ={entry_a.get('occ','')}"
         info_b.value = f"{entry_b['file']}:{entry_b['line']}  func={entry_b.get('func','')}  occ={entry_b.get('occ','')}"
-        en_a.value = entry_a.get("en", "")
-        en_b.value = entry_b.get("zh", "")
+        en_a.value = format_entry_text(entry_a, "en")
+        en_b.value = format_entry_text(entry_b, "zh")
 
-        is_diff = en_a.value != en_b.value
+        is_diff = entries_differ(entry_a, entry_b)
         diff_badge.visible = True
         if is_diff:
             diff_badge.content.value = "不同"
@@ -214,12 +269,21 @@ def main(page: ft.Page):
                 if not isinstance(left_entry, dict) or not isinstance(right_entry, dict):
                     continue
 
-                zh_text = right_entry.get("zh", "")
-                if left_entry.get("en", "") == zh_text:
+                if not entries_differ(left_entry, right_entry):
                     continue
 
                 item = copy.deepcopy(left_entry)
-                item["zh"] = zh_text
+                item["zh"] = normalize_text_list(right_entry.get("zh"))
+
+                left_args = normalize_args(item.get("args"))
+                right_args_zh = entry_args_by_idx(right_entry, "zh")
+                if left_args:
+                    for arg in left_args:
+                        idx = arg.get("idx")
+                        if idx is None:
+                            continue
+                        arg["zh"] = right_args_zh.get(int(idx), [])
+
                 merged_mode[key] = item
                 item_count += 1
 

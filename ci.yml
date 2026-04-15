@@ -1,0 +1,273 @@
+name: NetHack CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.imageName }}
+    continue-on-error: ${{ matrix.continueOnError || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux_latest_gcc14_minimal
+            imageName: ubuntu-latest
+            toolchainName: gcc14
+            buildTargetName: minimal
+
+          - name: linux_noble_clang_all
+            imageName: ubuntu-24.04
+            toolchainName: clang
+            buildTargetName: all
+
+          - name: linux_jammy_gcc9_all
+            imageName: ubuntu-22.04
+            toolchainName: gcc9
+            buildTargetName: all
+
+          - name: linux_noble_gcc13_all
+            imageName: ubuntu-24.04
+            toolchainName: gcc13
+            buildTargetName: all
+
+          - name: macOS_latest_clang_all
+            imageName: macos-latest
+            toolchainName: clang
+            buildTargetName: all
+
+          - name: macOS_Sequoia_clang15_all
+            imageName: macos-15
+            toolchainName: clang
+            buildTargetName: all
+
+          - name: windows-x64-vstudio
+            imageName: windows-latest
+            toolchainName: vs
+            buildTargetName: all
+            buildPlatform: Win32
+
+          - name: windows-arm64-vstudio
+            imageName: windows-latest
+            toolchainName: vs
+            buildTargetName: all
+            buildPlatform: ARM64
+
+          - name: windows-mingw
+            imageName: windows-2025
+            toolchainName: mingw
+            buildTargetName: all
+
+          - name: linux_latest_cross_msdos
+            imageName: ubuntu-latest
+            toolchainName: cross
+            buildTargetName: msdos
+
+          - name: linux_noble_docs
+            imageName: ubuntu-24.04
+            toolchainName: docs
+            buildTargetName: all
+            continueOnError: true
+
+    env:
+      toolchain: ${{ matrix.toolchainName }}
+      buildTarget: ${{ matrix.buildTargetName }}
+      netHackPath: s/NetHack
+
+    steps:
+      - name: Set toolchain variables
+        shell: bash
+        run: |
+          if [ "${{ matrix.toolchainName }}" == "gcc9" ]; then
+            echo "CC=gcc-9" >> "$GITHUB_ENV"
+            echo "CXX=g++-9" >> "$GITHUB_ENV"
+          fi
+          if [ "${{ matrix.toolchainName }}" == "gcc13" ]; then
+            echo "CC=gcc-13" >> "$GITHUB_ENV"
+            echo "CXX=g++-13" >> "$GITHUB_ENV"
+          fi
+          if [ "${{ matrix.toolchainName }}" == "gcc14" ]; then
+            echo "CC=gcc-14" >> "$GITHUB_ENV"
+            echo "CXX=g++-14" >> "$GITHUB_ENV"
+          fi
+          if [ "${{ matrix.toolchainName }}" == "clang" ]; then
+            echo "CC=clang" >> "$GITHUB_ENV"
+            echo "CXX=clang++" >> "$GITHUB_ENV"
+          fi
+          if [ "${{ matrix.toolchainName }}" == "cross" ]; then
+            echo "CC=gcc-13" >> "$GITHUB_ENV"
+            echo "CXX=g++-13" >> "$GITHUB_ENV"
+          fi
+
+      - name: Echo variables
+        shell: bash
+        run: |
+          echo "toolchain: $toolchain"
+          echo "buildTarget: $buildTarget"
+          echo "netHackPath: $netHackPath"
+          echo "CC: $CC"
+          echo "CXX: $CXX"
+
+      - name: Checkout NetHack 3.7
+        uses: actions/checkout@v4
+        with:
+          repository: NetHack/NetHack
+          ref: NetHack-3.7
+          submodules: recursive
+          path: s/NetHack
+
+      - name: Setup MSBuild
+        if: matrix.toolchainName == 'vs'
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore store key from secret
+        if: matrix.toolchainName == 'vs' && secrets.NETHACK_STOREKEY_PFX_BASE64 != ''
+        shell: pwsh
+        run: |
+          $target = Join-Path $env:GITHUB_WORKSPACE 's/NetHack/sys/windows/vs/NetHackPackage_StoreKey.pfx'
+          [System.IO.File]::WriteAllBytes($target, [Convert]::FromBase64String('${{ secrets.NETHACK_STOREKEY_PFX_BASE64 }}'))
+
+      - name: Visual Studio Build
+        if: matrix.toolchainName == 'vs'
+        shell: pwsh
+        run: |
+          $solution = Join-Path $env:GITHUB_WORKSPACE 's/NetHack/sys/windows/vs/NetHack.sln'
+          msbuild $solution /p:Configuration=Debug /p:Platform="${{ matrix.buildPlatform || 'Win32' }}"
+
+      - name: MinGW Build
+        if: matrix.toolchainName == 'mingw'
+        shell: bash
+        working-directory: s/NetHack/src
+        run: |
+          export ADD_LUA=Y
+          export WANT_LUAC=N
+          export LUATOP=../submodules/lua
+          export LUASRC=../submodules/lua
+          export ADD_CURSES=Y
+          export PDCURSES_TOP=../submodules/pdcursesmod
+          export LUA_VERSION=5.4.8
+          #
+          # 64-bit
+          #export CURLSRC=https://github.com/brechtsanders/winlibs_mingw/releases/download/14.2.0posix-19.1.1-12.0.0-ucrt-r2/winlibs-x86_64-posix-seh-gcc-14.2.0-llvm-19.1.1-mingw-w64ucrt-12.0.0-r2.zip
+          #export CURLSRC=https://github.com/brechtsanders/winlibs_mingw/releases/download/15.1.0posix-12.0.0-ucrt-r1/winlibs-x86_64-posix-seh-gcc-15.1.0-mingw-w64ucrt-12.0.0-r1.zip
+          #export CURLDST=mingw-x64.zip
+          #export MINGWBIN=mingw64
+          #export MSYSTEM=MINGW64
+          #
+          # 32-bit
+          #export CURLSRC=https://github.com/brechtsanders/winlibs_mingw/releases/download/14.2.0posix-19.1.1-12.0.0-ucrt-r2/winlibs-i686-posix-dwarf-gcc-14.2.0-llvm-19.1.1-mingw-w64ucrt-12.0.0-r2.zip
+          export CURLSRC=https://github.com/brechtsanders/winlibs_mingw/releases/download/15.1.0posix-12.0.0-ucrt-r1/winlibs-i686-posix-dwarf-gcc-15.1.0-mingw-w64ucrt-12.0.0-r1.zip
+          export CURLDST=mingw-x86.zip
+          export MINGWBIN=mingw32
+          export MSYSTEM=MINGW32
+          # all
+          mkdir -p ../lib
+          cd ../lib
+          mkdir -p mingw
+          curl -L "$CURLSRC" -o "$CURLDST"
+          #tar -C mingw -xvf $CURLDST
+          #/c/Windows/System32/tar -C mingw -xvf $CURLDST
+          powershell -command "Expand-Archive -Force $CURLDST mingw"
+          export PATH=../lib/mingw/$MINGWBIN/bin:$PATH
+          export
+          cd ../src
+          pwd
+          cp ../sys/windows/GNUmakefile* .
+          mingw32-make -f GNUmakefile CI_COMPILER=1 GIT=1 MSYSTEM=$MSYSTEM LUA_VERSION=$LUA_VERSION clean
+          mingw32-make -f GNUmakefile CI_COMPILER=1 GIT=1 MSYSTEM=$MSYSTEM LUA_VERSION=$LUA_VERSION depend
+          mingw32-make -f GNUmakefile CI_COMPILER=1 GIT=1 MSYSTEM=$MSYSTEM LUA_VERSION=$LUA_VERSION
+
+      - name: Getting linux build dependencies
+        if: runner.os == 'Linux' && matrix.buildTargetName == 'all'
+        shell: bash
+        working-directory: s/NetHack
+        run: |
+          sudo apt-get -qq -y update
+          sudo apt-get -qq -y install libncurses-dev
+          sudo apt-get -qq -y install libx11-dev libxaw7-dev xfonts-utils qtbase5-dev qtmultimedia5-dev qtbase5-dev-tools
+
+      - name: Building linux full build
+        if: runner.os == 'Linux' && matrix.buildTargetName == 'all'
+        shell: bash
+        working-directory: s/NetHack
+        run: |
+          cd sys/unix
+          sh setup.sh hints/linux.370
+          cd ../..
+          make fetch-lua
+          make WANT_WIN_ALL=1 QT_SELECT=5 MOC=moc all
+
+      - name: Building linux minimal build
+        if: runner.os == 'Linux' && matrix.buildTargetName == 'minimal'
+        shell: bash
+        working-directory: s/NetHack
+        run: |
+          cd sys/unix
+          sh setup.sh hints/linux-minimal
+          cd ../..
+          sed -i '/^#[ 	]*define CLIPPING/d'       include/config.h
+          sed -i '/^#[ 	]*define COMPRESS/d'       include/config.h
+          sed -i '/^#[ 	]*define CRASHREPORT/d'    include/config.h
+          #sed -i '/^#[ 	]*define DOAGAIN/d'        include/config.h
+          sed -i '/^#[ 	]*define DUMPLOG/d'        include/config.h
+          sed -i '/^#[ 	]*define DUMPLOG_CORE/d'   include/config.h
+          #sed -i '/^#[ 	]*define GDBPATH/d'        include/config.h
+          #sed -i '/^#[ 	]*define GREPPATH/d'       include/config.h
+          sed -i '/^#[ 	]*define INSURANCE/d'      include/config.h
+          sed -i '/^#[ 	]*define ENHANCED_SYMBOLS/d' include/config.h
+          sed -i '/^#[ 	]*define LOGFILE/d'        include/config.h
+          sed -i '/^#[ 	]*define NEWS/d'           include/config.h
+          sed -i '/^#[ 	]*define PANICLOG/d'       include/config.h
+          #sed -i '/^#[ 	]*define STATUS_HILITES/d' include/config.h
+          sed -i '/^#[ 	]*define SYSCF/d'          include/config.h
+          sed -i '/^#[ 	]*define USER_SOUNDS/d'    include/config.h
+          sed -i '/^#[ 	]*define XLOGFILE/d'       include/config.h
+          sed -i '/^#[ 	]*define HANGUPHANDLING/d' include/global.h
+          sed -i '/^#[ 	]*define MAIL/d'           include/unixconf.h
+          sed -i '/^#[ 	]*define SHELL/d'          include/unixconf.h
+          sed -i '/^#[ 	]*define SUSPEND/d'        include/unixconf.h
+          make fetch-lua
+          make WANT_WIN_ALL=1 NOCRASHREPORT=1 all
+
+      - name: Building mac full build
+        if: runner.os == 'macOS'
+        shell: bash
+        working-directory: s/NetHack
+        run: |
+          brew install groff
+          cd sys/unix
+          sh setup.sh hints/macos.370
+          cd ../..
+          make fetch-lua
+          make WANT_MACSOUND=1 all
+
+      - name: Building MSDOS build
+        if: runner.os == 'Linux' && matrix.toolchainName == 'cross'
+        shell: bash
+        working-directory: s/NetHack
+        run: |
+          sudo apt -qq -y install libfl2
+          export GCCVER=gcc1220
+          export IN_CI=SKIP_FONTS_IN_CI=1
+          cd sys/unix
+          sh setup.sh hints/linux.370
+          cd ../..
+          make fetch-lua
+          sys/msdos/fetch-cross-compiler.sh
+          retVal=$?
+          if [ $retVal -eq 0 ]; then
+            make LUA_VERSION=5.4.8 WANT_WIN_TTY=1 WANT_WIN_CURSES=1 CROSS_TO_MSDOS=1 $IN_CI package
+          fi
+
+      - name: Building NetHack documentation
+        if: runner.os == 'Linux' && matrix.toolchainName == 'docs'
+        shell: bash
+        working-directory: s/NetHack
+        run: |
+          sudo apt install texlive texlive-latex-extra
+          make Guidebook
+          make Guidebook.txt
+          make Guidebook.pdf

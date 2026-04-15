@@ -1,171 +1,184 @@
+import re
 import argparse
+
+import clang.cindex
 import hashlib
 import json
 import os
 from collections import defaultdict
 
-from tree_sitter import Language, Parser
-import tree_sitter_c
+# 如果你的 libclang 不在标准路径，取消注释下面这行
+clang.cindex.Config.set_library_file(r'D:\Scoop\apps\llvm\22.1.1\bin\libclang.dll')
 
 class NetHackScanner:
     def __init__(self, project_root, lang="en"):
         self.project_root = project_root
         self.lang = lang
-        self.parser = self._build_parser()
-        self.db = {"pline": {}, "Strcpy": {}, "Strcat": {}, "strcpy": {}, "strcat": {}}
-        # 跟踪函数内字符串出现次数: { "filename:funcname": count }
+        self.index = clang.cindex.Index.create()
+        self.db = {"pline": {}, "strcpy": {}, "strcat": {}}
+        # 跟踪函数内字符串出现次数: { "filename:funcname:text": count }
         self.occurrence_tracker = defaultdict(int)
         self._file_lines = {}
 
-    def _build_parser(self):
-        c_lang = Language(tree_sitter_c.language())
-        parser = Parser(c_lang)
-        return parser
 
-    def _node_text(self, node, source_bytes):
-        return source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="ignore")
+    def decode_octal_utf8(self, text):
+        """
+        将 C 风格的八进制转义字符串 (\350\246\201) 转换为 UTF-8 中文
+        """
+        # 匹配所有的 \xxx 格式 (x 是 0-7)
+        def replace_octal(match):
+            # 将八进制字符串转为整数，再转为字节
+            octal_str = match.group(1)
+            return bytes([int(octal_str, 8)])
 
-    def _extract_identifier(self, node, source_bytes):
-        if node is None:
-            return None
-        if node.type == "identifier":
-            return self._node_text(node, source_bytes)
-        for child in node.children:
-            name = self._extract_identifier(child, source_bytes)
-            if name:
-                return name
-        return None
-
-    def _call_callee_name(self, call_node, source_bytes):
-        func_node = call_node.child_by_field_name("function")
-        if func_node is None:
-            return None
-        if func_node.type == "identifier":
-            return self._node_text(func_node, source_bytes)
-        return self._extract_identifier(func_node, source_bytes)
-
-    def _collect_string_literals(self, node, source_bytes):
-        """递归查找节点下的字符串字面量（按出现顺序）。"""
+        try:
+            # 1. 先把所有 \xxx 替换为对应的原始字节流
+            # 注意：这里需要处理连续的八进制串
+            byte_data = re.sub(r'\\\\([0-7]{1,3})', replace_octal, text)
+            
+            # 2. 将字节流按 UTF-8 解码 (NetHack 源码通常是 UTF-8 或 Latin1)
+            # 如果是字符串字面量提取出来的，它本身可能是 bytes 类型
+            if isinstance(byte_data, str):
+                # 处理已经被转义成字面量 '\\' 的情况
+                byte_data = byte_data.encode('latin1').decode('unicode_escape').encode('latin1')
+                
+            return byte_data.decode('utf-8')
+        except Exception as e:
+            print(f"Warning: Failed to decode octal UTF-8 in text '{text}'. Error: {e}")
+            # 如果解码失败（比如不是合法的 UTF-8），返回原串避免丢失数据
+            return text
+        
+    def get_string_literals(self, node):
+        """递归查找节点下的所有字符串字面量（按出现顺序）"""
         results = []
 
         def visit(cur):
-            if cur.type == "string_literal":
-                raw = self._node_text(cur, source_bytes)
-                text = raw[1:-1] if raw.startswith('"') and raw.endswith('"') else raw
+            if cur.kind == clang.cindex.CursorKind.STRING_LITERAL:
+                text = self.decode_octal_utf8(cur.spelling.removeprefix('"').removesuffix('"'))
                 results.append(text)
-            for child in cur.children:
+            for child in cur.get_children():
                 visit(child)
 
         visit(node)
         return results
 
-    def _iter_named(self, node):
-        if node.is_named:
-            yield node
-        for child in node.children:
-            yield from self._iter_named(child)
+    def get_string_literal(self, node):
+        """兼容旧逻辑：返回第一个字符串字面量"""
+        texts = self.get_string_literals(node)
+        return texts[0] if texts else None
 
     def scan_file(self, file_path):
-        with open(file_path, "rb") as f:
-            source_bytes = f.read()
+        # 模拟编译参数，确保 libclang 能找到头文件
+        args = ['-Inethack/include', '-Iinclude', '-DNETHACK', '-DRELEASE']
+        tu = self.index.parse(file_path, args=args)
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            self._file_lines[file_path] = f.readlines()
+        
+        # 记录当前遍历到的函数名
+        self._current_func = "global"
+        self._current_func_cursor = None
+        self._scan_cursor(tu.cursor, file_path)
 
-        source_text = source_bytes.decode("utf-8", errors="ignore")
-        self._file_lines[file_path] = source_text.splitlines(keepends=True)
 
-        tree = self.parser.parse(source_bytes)
-        rel_path = os.path.relpath(file_path, self.project_root)
-
-        root = tree.root_node
-        for node in self._iter_named(root):
-            if node.type != "function_definition":
-                continue
-
-            decl = node.child_by_field_name("declarator")
-            func_name = self._extract_identifier(decl, source_bytes) or "global"
-            body = node.child_by_field_name("body")
-            if body is None:
-                continue
-
-            self._scan_function_body(body, rel_path, func_name, source_bytes)
-
-    def _scan_function_body(self, body_node, rel_path, func_name, source_bytes):
-        for node in self._iter_named(body_node):
-            if node.type != "call_expression":
-                continue
-
-            callee = self._call_callee_name(node, source_bytes)
-            if callee not in {"pline", "strcpy", "strcat", "Strcpy", "Strcat"}:
-                continue
-
-            arg_list = node.child_by_field_name("arguments")
-            if arg_list is None:
-                continue
-
-            args = [child for child in arg_list.named_children if child.type != "comment"]
-            if callee == "pline":
-                self._handle_pline_call(node, args, rel_path, func_name, source_bytes)
-            elif callee == "strcpy":
-                self._handle_strcpy_or_strcat_call("strcpy", node, args, rel_path, func_name, source_bytes)
-            elif callee == "strcat":
-                self._handle_strcpy_or_strcat_call("strcat", node, args, rel_path, func_name, source_bytes)
-            elif callee == "Strcpy":
-                self._handle_strcpy_or_strcat_call("Strcpy", node, args, rel_path, func_name, source_bytes)
-            elif callee == "Strcat":
-                self._handle_strcpy_or_strcat_call("Strcat", node, args, rel_path, func_name, source_bytes)
-
-    def _new_ctx(self, rel_path, func_name):
-        occ_key = f"{rel_path}:{func_name}"
+    def _new_ctx(self, rel_path):
+        """Generate incremental occurrence index and stable context id for current file/function."""
+        occ_key = f"{rel_path}:{self._current_func}"
         self.occurrence_tracker[occ_key] += 1
         idx = self.occurrence_tracker[occ_key]
+
+        # Context ID: 文件+函数+出现次数
         ctx_seed = f"{occ_key}:{idx}"
         ctx_id = hashlib.md5(ctx_seed.encode("utf-8", errors="ignore")).hexdigest()
         return idx, ctx_id
 
-    def _handle_pline_call(self, call_node, args, rel_path, func_name, source_bytes):
-        if not args:
-            return
+    
+    def get_ast_string(self,node, indent=0):
+        lines = []
+        
+        # 1. 构造当前节点的信息
+        # 格式：[种类] 拼写 (显示名)
+        node_info = f"{'  ' * indent}[{node.kind.name}] {node.spelling} {node.displayname}".strip()
+        # 处理空行或无名节点的情况，确保缩进对其
+        lines.append('  ' * indent + node_info.lstrip())
+        
+        # 2. 递归获取子节点字符串
+        for child in node.get_children():
+            child_string = self.get_ast_string(child, indent + 1)
+            if child_string:
+                lines.append(child_string)
+                
+        return "\n".join(lines)
 
-        raw_texts = self._collect_string_literals(args[0], source_bytes)
-        if not raw_texts:
-            return
+    def _scan_cursor(self, cursor, file_path):
+        # 1. 更新当前函数名
+        if cursor.kind == clang.cindex.CursorKind.FUNCTION_DECL:
+            self._current_func = cursor.spelling
+            self._current_func_cursor = cursor
 
-        idx, ctx_id = self._new_ctx(rel_path, func_name)
-        other_string_args = []
-        for i, arg in enumerate(args[1:], start=1):
-            arg_texts = self._collect_string_literals(arg, source_bytes)
-            if arg_texts:
-                other_string_args.append({
-                    "idx": i,
-                    self.lang: arg_texts,
-                })
+        # 2. 识别 pline 调用
+        if cursor.kind == clang.cindex.CursorKind.CALL_EXPR and cursor.spelling == 'pline':
+            call_args = list(cursor.get_arguments())
+            if call_args:
+                raw_texts = self.get_string_literals(call_args[0])
+                if raw_texts:
+                    rel_path = os.path.relpath(file_path, self.project_root)
+                    idx, ctx_id = self._new_ctx(rel_path)
+                    # 提取其他字符串字面量参数
+                    other_string_args = []
+                    for i, arg in enumerate(call_args[1:], start=1):
+                        arg_texts = self.get_string_literals(arg)
+                        if arg_texts:
+                            other_string_args.append({
+                                f"idx": i,
+                                self.lang: arg_texts,
+                            })
 
-        self.db["pline"][ctx_id] = {
-            "file": rel_path,
-            "line": call_node.start_point[0] + 1,
-            "col": call_node.start_point[1] + 1,
-            "func": func_name,
-            "occ": idx,
-            self.lang: raw_texts,
-            "args": other_string_args,
-        }
+                    self.db["pline"][ctx_id] = {
+                        "file": rel_path,
+                        "line": cursor.location.line,
+                        "col": cursor.location.column,
+                        "func": self._current_func,
+                        "occ": idx,
+                        self.lang: raw_texts,
+                        "args": other_string_args,
+                    }
 
-    def _handle_strcpy_or_strcat_call(self, bucket_name, call_node, args, rel_path, func_name, source_bytes):
-        if len(args) < 2:
-            return
+        elif cursor.kind == clang.cindex.CursorKind.CALL_EXPR and cursor.spelling == 'strcpy':
+            call_args = list(cursor.get_arguments())
+            if call_args and len(call_args) >= 2:
+                raw_texts = self.get_string_literals(call_args[1])
+                if raw_texts:
+                    rel_path = os.path.relpath(file_path, self.project_root)
+                    idx, ctx_id = self._new_ctx(rel_path)
 
-        raw_texts = self._collect_string_literals(args[1], source_bytes)
-        if not raw_texts:
-            return
+                    self.db["strcpy"][ctx_id] = {
+                        "file": rel_path,
+                        "line": cursor.location.line,
+                        "col": cursor.location.column,
+                        "func": self._current_func,
+                        "occ": idx,
+                        self.lang: raw_texts,
+                    }
 
-        idx, ctx_id = self._new_ctx(rel_path, func_name)
-        self.db[bucket_name][ctx_id] = {
-            "file": rel_path,
-            "line": call_node.start_point[0] + 1,
-            "col": call_node.start_point[1] + 1,
-            "func": func_name,
-            "occ": idx,
-            self.lang: raw_texts,
-        }
+        elif cursor.kind == clang.cindex.CursorKind.CALL_EXPR and cursor.spelling == 'strcat':
+            call_args = list(cursor.get_arguments())
+            if call_args and len(call_args) >= 2:
+                raw_texts = self.get_string_literals(call_args[1])
+                if raw_texts:
+                    rel_path = os.path.relpath(file_path, self.project_root)
+                    idx, ctx_id = self._new_ctx(rel_path)
+
+                    self.db["strcat"][ctx_id] = {
+                        "file": rel_path,
+                        "line": cursor.location.line,
+                        "col": cursor.location.column,
+                        "func": self._current_func,
+                        "occ": idx,
+                        self.lang: raw_texts,
+                    }
+        # 递归遍历子节点
+        for child in cursor.get_children():
+            self._scan_cursor(child, file_path)
 
     def save_json(self, output_file):
         with open(output_file, 'w', encoding='utf-8') as f:
@@ -177,8 +190,8 @@ if __name__ == "__main__":
     parser.add_argument("--lang", choices=["en", "zh"], default="en", help="Language key used in output JSON")
     args = parser.parse_args()
 
-    scanner = NetHackScanner(os.path.join(os.getcwd(), "Nethack"), lang=args.lang)
-    target_dir = os.path.join(scanner.project_root, "src")
+    scanner = NetHackScanner(os.getcwd()+"/Nethack", lang=args.lang)
+    target_dir = scanner.project_root + "/src"
     
     for filename in os.listdir(target_dir):
         if filename.endswith(".c"):

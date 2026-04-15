@@ -1,0 +1,46 @@
+diff --git a/src/pline.c b/src/pline.c
+index 79dd8b28b..cdc1d6adc 100644
+--- a/src/pline.c
++++ b/src/pline.c
+@@ -191,20 +191,41 @@ vpline(const char *line, va_list the_args)
+ 
+     if (!strchr(line, '%')) {
+         /* format does not specify any substitutions; use it as-is */
+         ln = (int) strlen(line);
+     } else if (line[0] == '%' && line[1] == 's' && !line[2]) {
+         /* "%s" => single string; skip format and use its first argument;
+            unlike with the format, it is irrelevant whether the argument
+            contains any percent signs */
+         line = va_arg(the_args, const char *); /*VA_NEXT(line,const char *);*/
+         ln = (int) strlen(line);
++    } else if (line[0] == '%' && line[1] >= '1' && line[1] <= '9') {
++        const char *p = line + 1;
++        int nth = 0, i;
++
++        while (*p >= '0' && *p <= '9') {
++            nth = (nth * 10) + (*p - '0');
++            ++p;
++        }
++        if (*p == '$' && p[1] == 's' && !p[2]) {
++            /* Support positional "%n$s" for a single string argument. */
++            for (i = 0; i < nth; ++i)
++                line = va_arg(the_args, const char *);
++            ln = (int) strlen(line);
++        } else {
++            /* perform printf() formatting */
++            ln = vsnprintf(pbuf, sizeof pbuf, line, the_args);
++            line = pbuf;
++            /* note: 'ln' is number of characters attempted, not necessarily
++               strlen(line); that matters for the overflow check; if we avoid
++               the extremely-too-long panic then 'ln' will be actual length */
++        }
+     } else {
+         /* perform printf() formatting */
+         ln = vsnprintf(pbuf, sizeof pbuf, line, the_args);
+         line = pbuf;
+         /* note: 'ln' is number of characters attempted, not necessarily
+            strlen(line); that matters for the overflow check; if we avoid
+            the extremely-too-long panic then 'ln' will be actual length */
+     }
+     if (ln > (int) sizeof pbuf - 1) /* extremely too long */
+         panic("pline attempting to print %d characters!", ln);

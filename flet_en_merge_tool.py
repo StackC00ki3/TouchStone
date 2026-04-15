@@ -49,10 +49,25 @@ def normalize_text_list(value: Any) -> List[str]:
     return [str(value)]
 
 
+def normalize_array_text_list(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return ["" if x is None else str(x) for x in value]
+
+
 def normalize_args_list(value: Any) -> List[Dict[str, Any]]:
     if not isinstance(value, list):
         return []
-    return [x for x in value if isinstance(x, dict)]
+    out: List[Dict[str, Any]] = []
+    for x in value:
+        if not isinstance(x, dict):
+            continue
+        item = dict(x)
+        item["idx"] = x.get("idx", "")
+        item["en"] = normalize_array_text_list(x.get("en"))
+        item["zh"] = normalize_array_text_list(x.get("zh"))
+        out.append(item)
+    return out
 
 
 def read_source_lines(base_path: str, rel_file: str, target_line: int) -> Tuple[List[str], int]:
@@ -187,7 +202,7 @@ def main(page: ft.Page) -> None:
     }
 
     state = {
-        "a_dir": r"D:\\Download\\nethack-367-src\\nethack-367-src\\NetHack-3.6.7",
+        "a_dir": r"D:\CodingFun\CProjects\TouchStone\Nethack",
         "b_dir": r"D:\\Download\\Compressed\\NetHack-cn-NetHack-cn\\NetHack",
         "a_path": "",
         "b_path": "",
@@ -340,11 +355,14 @@ def main(page: ft.Page) -> None:
             if arg_items:
                 for arg_i, arg in enumerate(arg_items):
                     arg_idx = arg.get("idx", "")
-                    arg_en = "" if arg.get("en") is None else str(arg.get("en"))
-                    arg_zh = "" if arg.get("zh") is None else str(arg.get("zh"))
+                    arg_en = normalize_text_list(arg.get("en"))
+                    arg_zh = normalize_text_list(arg.get("zh"))
                     arg_zh_input = ft.TextField(
-                        label=f"args[{arg_i}].zh",
-                        value=arg_zh,
+                        label=f"args[{arg_i}].zh（每行一个元素）",
+                        value="\n".join(arg_zh),
+                        multiline=True,
+                        min_lines=2,
+                        max_lines=6,
                         expand=True,
                         text_size=12,
                     )
@@ -355,7 +373,7 @@ def main(page: ft.Page) -> None:
                                 ft.Container(
                                     width=360,
                                     content=ft.Text(
-                                        f"idx={arg_idx} | en={arg_en}",
+                                        f"idx={arg_idx} | en={json.dumps(arg_en, ensure_ascii=False)}",
                                         selectable=True,
                                         size=12,
                                         color=ft.Colors.ORANGE_200,
@@ -403,7 +421,7 @@ def main(page: ft.Page) -> None:
                 if isinstance(args_value, list):
                     for arg_i, arg_editor in editors:
                         if 0 <= arg_i < len(args_value) and isinstance(args_value[arg_i], dict):
-                            args_value[arg_i]["zh"] = "" if arg_editor.value is None else str(arg_editor.value)
+                            args_value[arg_i]["zh"] = safe_split_lines(arg_editor.value or "")
 
                 # 同步刷新当前 A 条目的显示数据
                 a_cur["entry"] = out_entry

@@ -1,0 +1,88 @@
+diff --git a/include/hack.h b/include/hack.h
+index f655a8961..0dd0ec067 100644
+--- a/include/hack.h
++++ b/include/hack.h
+@@ -88,20 +88,23 @@
+ 
+ /* max size of a windowtype option */
+ #define WINTYPELEN 16
+ 
+ /* str_or_len from sp_lev.h */
+ typedef union str_or_len {
+     char *str;
+     int len;
+ } Str_or_Len;
+ 
++/* translation lookup: returns translated text for key, or fallback if absent */
++const char *tr(const char *key, const char *fallback);
++
+ enum artifacts_nums {
+ #define ARTI_ENUM
+ #include "artilist.h"
+ #undef ARTI_ENUM
+     AFTER_LAST_ARTIFACT
+ };
+ 
+ enum misc_arti_nums {
+     NROFARTIFACTS = (AFTER_LAST_ARTIFACT - 1)
+ };
+diff --git a/src/hack.c b/src/hack.c
+index ebdc126c2..8f42c57a9 100644
+--- a/src/hack.c
++++ b/src/hack.c
+@@ -62,20 +62,55 @@ staticfn int QSORTCALLBACK cmp_weights(const void *, const void *);
+      && !u.usteed)
+ #define Known_lwalking \
+     (Known_wwalking && Fire_resistance \
+      && uarmf->oerodeproof && uarmf->rknown)
+ 
+ /* mode values for findtravelpath() */
+ #define TRAVP_TRAVEL 0
+ #define TRAVP_GUESS  1
+ #define TRAVP_VALID  2
+ 
++struct tr_static_entry {
++    const char *key;
++    const char *value;
++};
++
++static const struct tr_static_entry tr_table_data[] = {
++#include "tr_table_data.inc"
++};
++
++#define TR_TABLE_COUNT ((int) SIZE(tr_table_data))
++
++const char *
++tr(const char *key, const char *fallback)
++{
++    int lo = 0, hi = TR_TABLE_COUNT - 1;
++
++    if (!key || !*key)
++        return fallback;
++
++    while (lo <= hi) {
++        int mid = lo + ((hi - lo) / 2);
++        int cmp = strcmp(key, tr_table_data[mid].key);
++
++        if (cmp == 0) {
++            const char *v = tr_table_data[mid].value;
++            return (v && *v) ? v : fallback;
++        }
++        if (cmp < 0)
++            hi = mid - 1;
++        else
++            lo = mid + 1;
++    }
++    return fallback;
++}
++
+ anything *
+ uint_to_any(unsigned ui)
+ {
+     gt.tmp_anything = cg.zeroany;
+     gt.tmp_anything.a_uint = ui;
+     return &gt.tmp_anything;
+ }
+ 
+ anything *
+ long_to_any(long lng)
