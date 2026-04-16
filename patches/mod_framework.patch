@@ -1,0 +1,346 @@
+diff --git a/include/hack.h b/include/hack.h
+index f655a8961..5d1d16a55 100644
+--- a/include/hack.h
++++ b/include/hack.h
+@@ -88,20 +88,24 @@
+ 
+ /* max size of a windowtype option */
+ #define WINTYPELEN 16
+ 
+ /* str_or_len from sp_lev.h */
+ typedef union str_or_len {
+     char *str;
+     int len;
+ } Str_or_Len;
+ 
++/* translation lookup: returns translated text for key, or fallback if absent */
++const char *tr(const char *key, const char *fallback);
++void nh_mod_init(void);
++
+ enum artifacts_nums {
+ #define ARTI_ENUM
+ #include "artilist.h"
+ #undef ARTI_ENUM
+     AFTER_LAST_ARTIFACT
+ };
+ 
+ enum misc_arti_nums {
+     NROFARTIFACTS = (AFTER_LAST_ARTIFACT - 1)
+ };
+diff --git a/src/allmain.c b/src/allmain.c
+index efa2e42e7..5d273166b 100644
+--- a/src/allmain.c
++++ b/src/allmain.c
+@@ -34,20 +34,21 @@ early_init(int argc USED_FOR_CRASHREPORT, char *argv[] USED_FOR_CRASHREPORT)
+ {
+ #ifdef CRASHREPORT
+     /* Do this as early as possible, but let ports do other things first. */
+     crashreport_init(argc, argv);
+ #endif
+     decl_globals_init();
+     objects_globals_init();
+     monst_globals_init();
+     sys_early_init();
+     runtime_info_init();
++    nh_mod_init();
+ }
+ 
+ staticfn void
+ moveloop_preamble(boolean resuming)
+ {
+     /* if a save file created in normal mode is now being restored in
+        explore mode, treat it as normal restore followed by 'X' command
+        to use up the save file and require confirmation for explore mode */
+     if (resuming && iflags.deferred_X)
+         (void) enter_explore_mode();
+diff --git a/src/hack.c b/src/hack.c
+index ebdc126c2..fa0d3183a 100644
+--- a/src/hack.c
++++ b/src/hack.c
+@@ -1,17 +1,26 @@
+ /* NetHack 3.7	hack.c	$NHDT-Date: 1763708572 2025/11/20 23:02:52 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.494 $ */
+ /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
+ /*-Copyright (c) Derek S. Ray, 2015. */
+ /* NetHack may be freely redistributed.  See license for details. */
+ 
+ #include "hack.h"
+ #include "extern.h"
++#include "mod_api.h"
++
++#ifdef UNIX
++#include <dirent.h>
++#include <dlfcn.h>
++#endif
++#ifdef WIN32
++#include <windows.h>
++#endif
+ 
+ /* #define DEBUG */ /* uncomment for debugging */
+ 
+ staticfn boolean could_move_onto_boulder(coordxy, coordxy);
+ staticfn void dopush(coordxy, coordxy, coordxy, coordxy, struct obj *,
+                      boolean);
+ staticfn void cannot_push_msg(struct obj *, coordxy, coordxy);
+ staticfn int cannot_push(struct obj *, coordxy, coordxy);
+ staticfn void rock_disappear_msg(struct obj *);
+ staticfn void moverock_done(coordxy, coordxy);
+@@ -44,38 +53,259 @@ staticfn boolean carrying_too_much(void);
+ staticfn boolean escape_from_sticky_mon(coordxy, coordxy);
+ staticfn void domove_core(void);
+ staticfn void maybe_smudge_engr(coordxy, coordxy, coordxy, coordxy);
+ staticfn struct monst *monstinroom(struct permonst *, int) NONNULLARG1;
+ staticfn boolean furniture_present(int, int);
+ staticfn void move_update(boolean);
+ staticfn int pickup_checks(void);
+ staticfn void maybe_wail(void);
+ staticfn boolean water_turbulence(coordxy *, coordxy *);
+ staticfn int QSORTCALLBACK cmp_weights(const void *, const void *);
++#if defined(UNIX) || defined(WIN32)
++staticfn int nh_mod_set_tr_hook_impl(nh_tr_hook_fn);
++staticfn void nh_mod_try_load_one(const char *);
++staticfn boolean nh_mod_has_suffix(const char *, const char *);
++staticfn boolean nh_mod_is_module_file(const char *);
++#endif
+ 
+ #define IS_SHOP(x) (svr.rooms[x].rtype >= SHOPBASE)
+ 
+ /* XXX: if more sources of water walking than just boots are added,
+    cause_known(insight.c) should be externified and used for this */
+ #define Known_wwalking \
+     (uarmf && uarmf->otyp == WATER_WALKING_BOOTS \
+      && objects[WATER_WALKING_BOOTS].oc_name_known \
+      && !u.usteed)
+ #define Known_lwalking \
+     (Known_wwalking && Fire_resistance \
+      && uarmf->oerodeproof && uarmf->rknown)
+ 
+ /* mode values for findtravelpath() */
+ #define TRAVP_TRAVEL 0
+ #define TRAVP_GUESS  1
+ #define TRAVP_VALID  2
+ 
++static nh_tr_hook_fn nh_tr_hook = (nh_tr_hook_fn) 0;
++
++#if defined(UNIX) || defined(WIN32)
++#define NH_MOD_MAX_HANDLES 64
++#define NH_MOD_DIR "mods"
++#define NH_MOD_PATH_BUFSZ 1024
++#ifdef WIN32
++#define NH_MOD_PATH_SEP "\\"
++typedef HMODULE nh_mod_handle_t;
++#else
++#define NH_MOD_PATH_SEP "/"
++typedef void *nh_mod_handle_t;
++#endif
++
++static nh_mod_handle_t nh_mod_handles[NH_MOD_MAX_HANDLES];
++static int nh_mod_handle_count = 0;
++static boolean nh_mod_loaded = FALSE;
++
++static const struct nh_mod_host_api nh_mod_host_api = {
++    NH_MOD_API_VERSION,
++    nh_mod_set_tr_hook_impl,
++};
++
++staticfn int
++nh_mod_set_tr_hook_impl(nh_tr_hook_fn hook)
++{
++    nh_tr_hook = hook;
++    return 0;
++}
++staticfn boolean
++nh_mod_has_suffix(const char *name, const char *suffix)
++{
++    size_t name_len, suffix_len, i;
++
++    if (!name || !suffix)
++        return FALSE;
++
++    name_len = strlen(name);
++    suffix_len = strlen(suffix);
++    if (name_len < suffix_len)
++        return FALSE;
++
++    for (i = 0; i < suffix_len; ++i) {
++        char a = name[name_len - suffix_len + i];
++        char b = suffix[i];
++
++#ifdef WIN32
++        if (a >= 'A' && a <= 'Z')
++            a = (char) (a - 'A' + 'a');
++        if (b >= 'A' && b <= 'Z')
++            b = (char) (b - 'A' + 'a');
++#endif
++
++        if (a != b)
++            return FALSE;
++    }
++
++    return TRUE;
++}
++
++staticfn boolean
++nh_mod_is_module_file(const char *name)
++{
++    if (!name || !*name)
++        return FALSE;
++
++#ifdef WIN32
++    return nh_mod_has_suffix(name, ".dll") || nh_mod_has_suffix(name, ".so");
++#elif defined(__APPLE__)
++    return nh_mod_has_suffix(name, ".dylib") || nh_mod_has_suffix(name, ".so");
++#else
++    return nh_mod_has_suffix(name, ".so");
++#endif
++}
++
++staticfn void
++nh_mod_try_load_one(const char *path)
++{
++    nh_mod_handle_t handle;
++    nh_mod_init_fn initfn;
++    int init_status;
++
++#ifdef WIN32
++    handle = LoadLibraryA(path);
++    if (!handle) {
++        raw_printf("mod load failed: %s (error=%lu)",
++                   path, (unsigned long) GetLastError());
++        return;
++    }
++
++    initfn = (nh_mod_init_fn) (void *) GetProcAddress(handle,
++                                                       NH_MOD_INIT_SYMBOL);
++    if (!initfn) {
++        raw_printf("mod missing init symbol '%s': %s", NH_MOD_INIT_SYMBOL,
++                   path);
++        (void) FreeLibrary(handle);
++        return;
++    }
++#else
++    handle = dlopen(path, RTLD_NOW);
++    if (!handle) {
++        raw_printf("mod load failed: %s (%s)", path, dlerror());
++        return;
++    }
++
++    initfn = (nh_mod_init_fn) dlsym(handle, NH_MOD_INIT_SYMBOL);
++    if (!initfn) {
++        raw_printf("mod missing init symbol '%s': %s", NH_MOD_INIT_SYMBOL,
++                   path);
++        (void) dlclose(handle);
++        return;
++    }
++#endif
++
++    init_status = (*initfn)(&nh_mod_host_api);
++    if (init_status != 0) {
++        raw_printf("mod init failed (%d): %s", init_status, path);
++#ifdef WIN32
++        (void) FreeLibrary(handle);
++#else
++        (void) dlclose(handle);
++#endif
++        return;
++    }
++
++    if (nh_mod_handle_count < NH_MOD_MAX_HANDLES)
++        nh_mod_handles[nh_mod_handle_count++] = handle;
++    else {
++        raw_printf("mod handle limit reached, unloading: %s", path);
++#ifdef WIN32
++        (void) FreeLibrary(handle);
++#else
++        (void) dlclose(handle);
++#endif
++    }
++}
++#endif
++
++void
++nh_mod_init(void)
++{
++
++#ifdef WIN32
++    WIN32_FIND_DATAA find_data;
++    HANDLE find_handle;
++    char pattern[NH_MOD_PATH_BUFSZ];
++#else
++    DIR *dirp;
++    struct dirent *entry;
++#endif
++
++    if (nh_mod_loaded)
++        return;
++    nh_mod_loaded = TRUE;
++
++#ifdef WIN32
++    Snprintf(pattern, sizeof pattern, "%s\\*.*", NH_MOD_DIR);
++    find_handle = FindFirstFileA(pattern, &find_data);
++    if (find_handle == INVALID_HANDLE_VALUE)
++        return;
++
++    do {
++        const char *name = find_data.cFileName;
++        char path[NH_MOD_PATH_BUFSZ];
++
++        if (!name || name[0] == '.')
++            continue;
++        if ((find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
++            continue;
++        if (!nh_mod_is_module_file(name))
++            continue;
++
++        Snprintf(path, sizeof path, "%s%s%s", NH_MOD_DIR,
++                 NH_MOD_PATH_SEP, name);
++        nh_mod_try_load_one(path);
++    } while (FindNextFileA(find_handle, &find_data));
++
++    (void) FindClose(find_handle);
++#else
++    dirp = opendir(NH_MOD_DIR);
++    if (!dirp)
++        return;
++
++    while ((entry = readdir(dirp)) != 0) {
++        char path[NH_MOD_PATH_BUFSZ];
++
++        if (!entry->d_name || entry->d_name[0] == '.')
++            continue;
++        if (!nh_mod_is_module_file(entry->d_name))
++            continue;
++
++        Snprintf(path, sizeof path, "%s%s%s", NH_MOD_DIR,
++                 NH_MOD_PATH_SEP, entry->d_name);
++        nh_mod_try_load_one(path);
++    }
++    (void) closedir(dirp);
++#endif
++}
++
++const char *
++tr(const char *key, const char *fallback)
++{
++    if (!key || !*key)
++        return fallback;
++
++    if (nh_tr_hook) {
++        const char *translated = (*nh_tr_hook)(key, fallback);
++
++        if (translated && *translated)
++            return translated;
++    }
++
++    return fallback;
++}
++
+ anything *
+ uint_to_any(unsigned ui)
+ {
+     gt.tmp_anything = cg.zeroany;
+     gt.tmp_anything.a_uint = ui;
+     return &gt.tmp_anything;
+ }
+ 
+ anything *
+ long_to_any(long lng)
