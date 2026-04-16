@@ -19,6 +19,7 @@ class NetHackScanner:
         # 跟踪函数内字符串出现次数: { "filename:funcname:text": count }
         self.occurrence_tracker = defaultdict(int)
         self._file_lines = {}
+        self._file_bytes = {}
 
 
     def decode_octal_utf8(self, text):
@@ -48,14 +49,92 @@ class NetHackScanner:
             # 如果解码失败（比如不是合法的 UTF-8），返回原串避免丢失数据
             return text
         
-    def get_string_literals(self, node):
+    def _is_cursor_spelled_within(self, cursor, scope_node, file_path):
+        """Whether cursor text is spelled directly inside scope_node in the same source file."""
+        if not cursor or not scope_node:
+            return False
+        if not cursor.location or not cursor.location.file:
+            return False
+        if not cursor.extent or not scope_node.extent:
+            return False
+
+        cur_file = os.path.normpath(str(cursor.location.file))
+        src_file = os.path.normpath(file_path)
+        if cur_file != src_file:
+            return False
+
+        cur_start = cursor.extent.start.offset
+        cur_end = cursor.extent.end.offset
+        scope_start = scope_node.extent.start.offset
+        scope_end = scope_node.extent.end.offset
+
+        if min(cur_start, cur_end, scope_start, scope_end) < 0:
+            return False
+
+        return scope_start <= cur_start and cur_end <= scope_end
+
+    def _get_source_slice_by_extent(self, cursor, file_path):
+        """Get raw source slice for cursor extent from current file bytes."""
+        buf = self._file_bytes.get(file_path)
+        if buf is None or not cursor or not cursor.extent:
+            return ""
+
+        start = cursor.extent.start.offset
+        end = cursor.extent.end.offset
+        if min(start, end) < 0 or end <= start or end > len(buf):
+            return ""
+
+        return buf[start:end].decode("utf-8", errors="ignore")
+
+    def _literal_matches_source_at_extent(self, cursor, file_path):
+        """Validate that source text at cursor extent really contains this literal."""
+        src = self._get_source_slice_by_extent(cursor, file_path)
+        if not src or '"' not in src:
+            return False
+
+        spelling = (cursor.spelling or "").strip()
+        if not spelling:
+            return False
+
+        # Direct match covers most regular string literals.
+        if spelling in src:
+            return True
+
+        # Fallback for prefixed literals like u8"..." where spelling may omit prefix.
+        if spelling.startswith('"') and spelling.endswith('"') and spelling in src:
+            return True
+
+        return False
+
+    def get_string_literals(self, node, file_path=None):
         """递归查找节点下的所有字符串字面量（按出现顺序）"""
         results = []
+        last_offset = -1
 
         def visit(cur):
+            nonlocal last_offset
+
+            cur_offset = -1
+            if cur and cur.extent:
+                cur_offset = cur.extent.start.offset
+
+            # 遍历要求 offset 严格递增；非递增节点直接跳过
+            if cur_offset >= 0:
+                if cur_offset < last_offset:
+                    return
+                last_offset = cur_offset
+
             if cur.kind == clang.cindex.CursorKind.STRING_LITERAL:
-                text = self.decode_octal_utf8(cur.spelling.removeprefix('"').removesuffix('"'))
-                results.append(text)
+                if file_path:
+                    if self._literal_matches_source_at_extent(cur, file_path):
+                        # 确认该源码位置确实有这个字符串字面量
+                        text = self.decode_octal_utf8(cur.spelling.removeprefix('"').removesuffix('"'))
+                        results.append(text)
+                    else:
+                        pass
+                else:
+                    text = self.decode_octal_utf8(cur.spelling.removeprefix('"').removesuffix('"'))
+                    results.append(text)
             for child in cur.get_children():
                 visit(child)
 
@@ -67,10 +146,48 @@ class NetHackScanner:
         texts = self.get_string_literals(node)
         return texts[0] if texts else None
 
+    def _get_identifier_at_location(self, file_path, line, col):
+        """Return identifier text at a source location, or None if unavailable."""
+        lines = self._file_lines.get(file_path)
+        if not lines:
+            return None
+        if line < 1 or line > len(lines):
+            return None
+
+        line_text = lines[line - 1]
+        idx = max(col - 1, 0)
+        if idx >= len(line_text):
+            return None
+
+        while idx < len(line_text) and line_text[idx].isspace():
+            idx += 1
+
+        m = re.match(r"[A-Za-z_][A-Za-z0-9_]*", line_text[idx:])
+        return m.group(0) if m else None
+
+    def _is_direct_callee_call(self, cursor, file_path, expected_name):
+        """Only keep calls whose source text callee matches expected_name exactly.
+
+        This filters out macro wrappers such as pline1(cstr) -> pline("%s", cstr).
+        """
+        loc = cursor.location
+        if not loc or not loc.file:
+            return False
+
+        loc_file = os.path.normpath(str(loc.file))
+        cur_file = os.path.normpath(file_path)
+        if loc_file != cur_file:
+            return False
+
+        ident = self._get_identifier_at_location(file_path, loc.line, loc.column)
+        return ident == expected_name
+
     def scan_file(self, file_path):
         # 模拟编译参数，确保 libclang 能找到头文件
         args = ['-Inethack/include', '-Iinclude', '-DNETHACK', '-DRELEASE']
         tu = self.index.parse(file_path, args=args)
+        with open(file_path, 'rb') as f:
+            self._file_bytes[file_path] = f.read()
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             self._file_lines[file_path] = f.readlines()
         
@@ -117,16 +234,21 @@ class NetHackScanner:
 
         # 2. 识别 pline 调用
         if cursor.kind == clang.cindex.CursorKind.CALL_EXPR and cursor.spelling == 'pline':
+            if not self._is_direct_callee_call(cursor, file_path, 'pline'):
+                for child in cursor.get_children():
+                    self._scan_cursor(child, file_path)
+                return
+
             call_args = list(cursor.get_arguments())
             if call_args:
-                raw_texts = self.get_string_literals(call_args[0])
+                raw_texts = self.get_string_literals(call_args[0], file_path=file_path)
                 if raw_texts:
                     rel_path = os.path.relpath(file_path, self.project_root)
                     idx, ctx_id = self._new_ctx(rel_path)
                     # 提取其他字符串字面量参数
                     other_string_args = []
                     for i, arg in enumerate(call_args[1:], start=1):
-                        arg_texts = self.get_string_literals(arg)
+                        arg_texts = self.get_string_literals(arg, file_path=file_path)
                         if arg_texts:
                             other_string_args.append({
                                 f"idx": i,
@@ -146,7 +268,7 @@ class NetHackScanner:
         elif cursor.kind == clang.cindex.CursorKind.CALL_EXPR and cursor.spelling == 'strcpy':
             call_args = list(cursor.get_arguments())
             if call_args and len(call_args) >= 2:
-                raw_texts = self.get_string_literals(call_args[1])
+                raw_texts = self.get_string_literals(call_args[1], file_path=file_path)
                 if raw_texts:
                     rel_path = os.path.relpath(file_path, self.project_root)
                     idx, ctx_id = self._new_ctx(rel_path)
@@ -163,7 +285,7 @@ class NetHackScanner:
         elif cursor.kind == clang.cindex.CursorKind.CALL_EXPR and cursor.spelling == 'strcat':
             call_args = list(cursor.get_arguments())
             if call_args and len(call_args) >= 2:
-                raw_texts = self.get_string_literals(call_args[1])
+                raw_texts = self.get_string_literals(call_args[1], file_path=file_path)
                 if raw_texts:
                     rel_path = os.path.relpath(file_path, self.project_root)
                     idx, ctx_id = self._new_ctx(rel_path)
