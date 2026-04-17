@@ -30,6 +30,7 @@ class TranslationInjector:
         self.clang_args = clang_args
         self.index = clang.cindex.Index.create()
         self._current_content_bytes = b""
+        self._file_bytes: Dict[str, bytes] = {}
 
         self.ctx_by_file: Dict[str, Dict[Tuple[int, int, str], str]] = {}
         self._load_ctx_index()
@@ -93,22 +94,73 @@ class TranslationInjector:
             print(f"Warning: Failed to decode octal UTF-8 in text '{text}'. Error: {e}")
             # 如果解码失败（比如不是合法的 UTF-8），返回原串避免丢失数据
             return text
-        
-    def get_string_literals(self, node):
+
+    def _get_source_slice_by_extent(self, cursor, file_path: str) -> str:
+        """Get raw source slice for cursor extent from current file bytes."""
+        buf = self._file_bytes.get(file_path)
+        if buf is None or not cursor or not cursor.extent:
+            return ""
+
+        start = cursor.extent.start.offset
+        end = cursor.extent.end.offset
+        if min(start, end) < 0 or end <= start or end > len(buf):
+            return ""
+
+        return buf[start:end].decode("utf-8", errors="ignore")
+
+    def _literal_matches_source_at_extent(self, cursor, file_path: str) -> bool:
+        """Validate that source text at cursor extent really contains this literal."""
+        src = self._get_source_slice_by_extent(cursor, file_path)
+        if not src or '"' not in src:
+            return False
+
+        spelling = (cursor.spelling or "").strip()
+        if not spelling:
+            return False
+
+        # Direct match covers most regular string literals.
+        if spelling in src:
+            return True
+
+        # Fallback for prefixed literals like u8"..." where spelling may omit prefix.
+        if spelling.startswith('"') and spelling.endswith('"') and spelling in src:
+            return True
+
+        return False
+
+    def get_string_literals(self, node, file_path: str = None):
         """递归查找节点下的所有字符串字面量（按出现顺序）"""
         results = []
+        last_offset = -1
 
         def visit(cur):
+            nonlocal last_offset
+
+            cur_offset = -1
+            if cur and cur.extent:
+                cur_offset = cur.extent.start.offset
+
+            # 遍历要求 offset 严格递增；非递增节点直接跳过
+            if cur_offset >= 0:
+                if cur_offset < last_offset:
+                    return
+                last_offset = cur_offset
+
             if cur.kind == clang.cindex.CursorKind.STRING_LITERAL:
-                # Return cursor nodes so callers can use extent offsets for source replacement.
-                results.append(cur)
+                if file_path:
+                    if self._literal_matches_source_at_extent(cur, file_path):
+                        results.append(cur)
+                    else:
+                        pass
+                else:
+                    results.append(cur)
             for child in cur.get_children():
                 visit(child)
 
         visit(node)
         return results
 
-    def _build_replacements_for_call(self, call_cursor, ctx_id: str) -> List[Tuple[int, int, bytes]]:
+    def _build_replacements_for_call(self, call_cursor, ctx_id: str, file_path: str) -> List[Tuple[int, int, bytes]]:
         args = list(call_cursor.get_arguments())
         if not args:
             return []
@@ -117,14 +169,14 @@ class TranslationInjector:
         callee = call_cursor.spelling.lower()
 
         if callee == "pline":
-            for arg_idx, lit in enumerate(self.get_string_literals(args[0])):
+            for arg_idx, lit in enumerate(self.get_string_literals(args[0], file_path=file_path)):
                 targets.append((lit, f"{ctx_id}:en:{arg_idx}"))
             for arg_idx, arg in enumerate(args[1:], start=1):
-                for lit_idx, lit in enumerate(self.get_string_literals(arg)):
+                for lit_idx, lit in enumerate(self.get_string_literals(arg, file_path=file_path)):
                     targets.append((lit, f"{ctx_id}:arg:{arg_idx}:{lit_idx}"))
         elif callee in ("strcpy", "strcat"):
             if len(args) >= 2:
-                for arg_idx, lit in enumerate(self.get_string_literals(args[1])):
+                for arg_idx, lit in enumerate(self.get_string_literals(args[1], file_path=file_path)):
                     targets.append((lit, f"{ctx_id}:en:{arg_idx}"))
 
         replacements: List[Tuple[int, int, bytes]] = []
@@ -139,7 +191,7 @@ class TranslationInjector:
 
         return replacements
 
-    def _scan_cursor(self, cursor, rel_path: str, edits: List[Tuple[int, int, bytes]]) -> None:
+    def _scan_cursor(self, cursor, rel_path: str, file_path: str, edits: List[Tuple[int, int, bytes]]) -> None:
         if cursor.kind == clang.cindex.CursorKind.CALL_EXPR:
             callee = cursor.spelling.lower()
             if callee in ("pline", "strcpy", "strcat"):
@@ -148,10 +200,10 @@ class TranslationInjector:
                 key = (line, col, callee)
                 ctx_id = self.ctx_by_file.get(rel_path, {}).get(key)
                 if ctx_id:
-                    edits.extend(self._build_replacements_for_call(cursor, ctx_id))
+                    edits.extend(self._build_replacements_for_call(cursor, ctx_id, file_path))
 
         for child in cursor.get_children():
-            self._scan_cursor(child, rel_path, edits)
+            self._scan_cursor(child, rel_path, file_path, edits)
 
     def process_file(self, file_path: str, dry_run: bool = False) -> int:
         rel_path = self._norm_rel_path(os.path.relpath(file_path, self.project_root))
@@ -164,8 +216,9 @@ class TranslationInjector:
             content_bytes = f.read()
 
         self._current_content_bytes = content_bytes
+        self._file_bytes[file_path] = content_bytes
         edits: List[Tuple[int, int, bytes]] = []
-        self._scan_cursor(tu.cursor, rel_path, edits)
+        self._scan_cursor(tu.cursor, rel_path, file_path, edits)
 
         if not edits:
             return 0
