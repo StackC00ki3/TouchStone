@@ -9,11 +9,11 @@ import clang.cindex
 # If libclang is not in PATH, uncomment and adjust this line.
 clang.cindex.Config.set_library_file(r"D:\Scoop\apps\llvm\22.1.1\bin\libclang.dll")
 
-
-SECTION_TO_CALLEE = {
-    "pline": "pline",
-    "Strcpy": "strcpy",
-    "Strcat": "strcat",
+SKIP_FILES = {
+    'mdlib.c',
+    'date.c',
+    'isaac64.c',
+    'hacklib.c', 
 }
 
 class TranslationInjector:
@@ -35,6 +35,11 @@ class TranslationInjector:
         self.ctx_by_file: Dict[str, Dict[Tuple[int, int, str], str]] = {}
         self._load_ctx_index()
 
+    def should_process_file(self, file_path: str) -> bool:
+        """判断是否需要处理此文件"""
+        filename = os.path.basename(file_path)
+        return filename not in SKIP_FILES
+
     @staticmethod
     def _norm_rel_path(path: str) -> str:
         return os.path.normpath(path)
@@ -43,8 +48,8 @@ class TranslationInjector:
         with open(self.db_path, "r", encoding="utf-8") as f:
             db = json.load(f)
 
-        for section, callee in SECTION_TO_CALLEE.items():
-            sec = db.get(section, {})
+        for callee in db.keys():
+            sec = db.get(callee, {})
             for ctx_id, entry in sec.items():
                 rel_file = self._norm_rel_path(entry["file"])
                 line = int(entry["line"])
@@ -205,7 +210,10 @@ class TranslationInjector:
         for child in cursor.get_children():
             self._scan_cursor(child, rel_path, file_path, edits)
 
-    def process_file(self, file_path: str, dry_run: bool = False) -> int:
+    def process_file(self, file_path: str, dry_run: bool = False) -> int:        
+        if not self.should_process_file(file_path):
+            return 0
+
         rel_path = self._norm_rel_path(os.path.relpath(file_path, self.project_root))
         if rel_path not in self.ctx_by_file:
             return 0
