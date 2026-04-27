@@ -7,8 +7,14 @@ import json
 import os
 from collections import defaultdict
 
-# 如果你的 libclang 不在标准路径，取消注释下面这行
 clang.cindex.Config.set_library_file(r'D:\Scoop\apps\llvm\22.1.1\bin\libclang.dll')
+
+SKIP_FILES = {
+    'mdlib.c',
+    'date.c',
+    'isaac64.c',
+    'hacklib.c'
+}
 
 class NetHackScanner:
     def __init__(self, project_root, lang="en"):
@@ -21,6 +27,10 @@ class NetHackScanner:
         self._file_lines = {}
         self._file_bytes = {}
 
+    def should_process_file(self, file_path: str) -> bool:
+        """判断是否需要处理此文件"""
+        filename = os.path.basename(file_path)
+        return filename not in SKIP_FILES
 
     def decode_octal_utf8(self, text):
         """
@@ -318,7 +328,8 @@ if __name__ == "__main__":
     for filename in os.listdir(target_dir):
         if filename.endswith(".c"):
             print(f"Scanning {filename}...")
-            scanner.scan_file(os.path.join(target_dir, filename))
-            
+            if scanner.should_process_file(os.path.join(target_dir, filename)):
+                scanner.scan_file(os.path.join(target_dir, filename))
+
     scanner.save_json("nethack_strings.json")
     print(f"Done! Extracted {len(scanner.db['pline']) + len(scanner.db['strcpy']) + len(scanner.db['strcat'])} strings.")
