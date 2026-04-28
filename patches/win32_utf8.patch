@@ -1,0 +1,131 @@
+diff --git a/win/win32/NetHackW.c b/win/win32/NetHackW.c
+index 5a945af5c..4658c62d0 100644
+--- a/win/win32/NetHackW.c
++++ b/win/win32/NetHackW.c
+@@ -428,10 +428,102 @@ _nhapply_image_transparent(HDC hDC, int x, int y, int width, int height,
+     DeleteObject(SelectObject(hdcMem, bmMemOld));
+     DeleteObject(SelectObject(hdcSave, bmSaveOld));
+ 
+     DeleteDC(hdcMem);
+     DeleteDC(hdcBack);
+     DeleteDC(hdcObject);
+     DeleteDC(hdcSave);
+ 
+     return TRUE;
+ }
++
++int
++DrawTextA_UTF8(HDC hdc, const char *text_utf8, int text_len, LPRECT rect,
++               UINT format)
++{
++    int result = 0;
++
++    if (!text_utf8 || !hdc) {
++        return 0;
++    }
++
++    /* Calculate required size for UTF-16 conversion */
++    int wlen = MultiByteToWideChar(CP_UTF8, 0, text_utf8, text_len, NULL, 0);
++
++    if (wlen > 0) {
++        /* Allocate buffer for UTF-16 string */
++        wchar_t *text_utf16 =
++            (wchar_t *) malloc((wlen + 1) * sizeof(wchar_t));
++
++        if (text_utf16) {
++            /* Convert UTF-8 to UTF-16 */
++            MultiByteToWideChar(CP_UTF8, 0, text_utf8, text_len, text_utf16,
++                                wlen);
++            text_utf16[wlen] = L'\0';
++
++            /* Use DrawTextW (Unicode version) */
++            RECT temp_rect = *rect;
++            result = DrawTextW(hdc, text_utf16, -1, &temp_rect, format);
++
++            /* Copy modified rect back */
++            *rect = temp_rect;
++
++            free(text_utf16);
++        }
++    }
++
++    return result;
++}
++
++int ListView_InsertColumn_UTF8(HWND hwndLV, int iCol, const LV_COLUMN *pcol)
++{
++    LV_COLUMN col;
++    
++    if (!pcol)
++        return SendMessage(hwndLV, LVM_INSERTCOLUMN, (WPARAM)iCol, (LPARAM)pcol);
++    
++    col = *pcol;
++    
++    /* Convert UTF-8 text to system code page char* */
++    if (pcol->pszText && (pcol->mask & LVCF_TEXT)) {
++        /* First: calculate size needed for UTF-8 to wchar_t */
++        int wlen = MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)pcol->pszText, -1, 
++                                       NULL, 0);
++        
++        if (wlen > 0) {
++            /* Allocate buffer for wchar_t */
++            wchar_t *wbuf = (wchar_t *)malloc(wlen * sizeof(wchar_t));
++            
++            if (wbuf) {
++                /* Convert UTF-8 to wchar_t */
++                MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)pcol->pszText, -1, 
++                                   wbuf, wlen);
++                
++                /* Calculate size needed for wchar_t to system code page */
++                int alen = WideCharToMultiByte(CP_ACP, 0, wbuf, -1, 
++                                              NULL, 0, NULL, NULL);
++                
++                if (alen > 0) {
++                    /* Allocate buffer for system code page char* */
++                    char *abuf = (char *)malloc(alen);
++                    
++                    if (abuf) {
++                        /* Convert wchar_t to system code page */
++                        WideCharToMultiByte(CP_ACP, 0, wbuf, -1, 
++                                           abuf, alen, NULL, NULL);
++                        
++                        col.pszText = abuf;
++                        int result = SendMessage(hwndLV, LVM_INSERTCOLUMN, 
++                                                (WPARAM)iCol, (LPARAM)&col);
++                        
++                        free(abuf);
++                        free(wbuf);
++                        return result;
++                    }
++                }
++                free(wbuf);
++            }
++        }
++    }
++    
++    return SendMessage(hwndLV, LVM_INSERTCOLUMN, (WPARAM)iCol, (LPARAM)&col);
++}
+diff --git a/win/win32/winMS.h b/win/win32/winMS.h
+index 1de3db042..5250a56db 100644
+--- a/win/win32/winMS.h
++++ b/win/win32/winMS.h
+@@ -260,11 +260,19 @@ extern COLORREF message_fg_color;
+ #endif
+ 
+ /* map mode macros */
+ #define IS_MAP_FIT_TO_SCREEN(mode)          \
+     ((mode) == MAP_MODE_ASCII_FIT_TO_SCREEN \
+      || (mode) == MAP_MODE_TILES_FIT_TO_SCREEN)
+ 
+ #define IS_MAP_ASCII(mode) \
+     ((mode) != MAP_MODE_TILES && (mode) != MAP_MODE_TILES_FIT_TO_SCREEN)
+ 
++
++int DrawTextA_UTF8(HDC hdc, const char *text_utf8, int text_len, LPRECT rect, UINT format);
++int ListView_InsertColumn_UTF8(HWND hwndLV, int iCol, const LV_COLUMN *pcol);
++
++#undef DrawText
++#define DrawText DrawTextA_UTF8
++#undef ListView_InsertColumn
++#define ListView_InsertColumn ListView_InsertColumn_UTF8
+ #endif /* WINMS_H */
