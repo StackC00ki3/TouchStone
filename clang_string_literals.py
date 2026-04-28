@@ -44,6 +44,21 @@ def get_source_slice_by_extent(file_bytes: Dict[str, bytes], cursor, file_path: 
     return buf[start:end].decode("utf-8", errors="ignore")
 
 
+def _strip_literal_prefix(text: str) -> str:
+    text = text.strip()
+    for prefix in _LITERAL_PREFIXES:
+        if text.startswith(prefix):
+            return text[len(prefix):].lstrip()
+    return text
+
+
+def _strip_literal_quotes(text: str) -> str:
+    text = _strip_literal_prefix(text)
+    if text.startswith('"') and text.endswith('"'):
+        return text[1:-1]
+    return text
+
+
 def literal_matches_source_at_extent(file_bytes: Dict[str, bytes], cursor, file_path: str) -> bool:
     """Validate that source text at cursor extent really contains this literal."""
     src = get_source_slice_by_extent(file_bytes, cursor, file_path)
@@ -57,10 +72,14 @@ def literal_matches_source_at_extent(file_bytes: Dict[str, bytes], cursor, file_
     if spelling in src:
         return True
 
-    if spelling.startswith('"') and spelling.endswith('"'):
-        return any(f"{prefix}{spelling}" in src for prefix in _LITERAL_PREFIXES)
+    if spelling.startswith('"') and spelling.endswith('"') and any(
+        f"{prefix}{spelling}" in src for prefix in _LITERAL_PREFIXES
+    ):
+        return True
 
-    return False
+    decoded_spelling = decode_octal_utf8(_strip_literal_quotes(spelling))
+    decoded_src = decode_octal_utf8(_strip_literal_quotes(src))
+    return decoded_spelling == decoded_src
 
 
 def get_string_literal_cursors(node, file_bytes: Dict[str, bytes], file_path: Optional[str] = None) -> List[object]:
@@ -93,7 +112,7 @@ def get_string_literal_cursors(node, file_bytes: Dict[str, bytes], file_path: Op
 
 def _cursor_to_literal_text(cursor) -> str:
     spelling = (cursor.spelling or "").strip()
-    return decode_octal_utf8(spelling.removeprefix('"').removesuffix('"'))
+    return decode_octal_utf8(_strip_literal_quotes(spelling))
 
 
 def get_string_literal_texts(node, file_bytes: Dict[str, bytes], file_path: Optional[str] = None) -> List[str]:

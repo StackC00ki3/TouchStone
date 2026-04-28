@@ -77,7 +77,7 @@ def main() -> int:
     parser.add_argument(
         "-o",
         "--output",
-        default="Nethack/src/tr_table_data.inc",
+        default="mods/zh_translate/tr_table_data.inc",
         help="Output C include path",
     )
     args = parser.parse_args()

@@ -20,9 +20,6 @@ SKIP_FILES = {
     'hacklib.c',
 }
 
-PARSE_ARGS = ('-Inethack/include', '-Iinclude', '-DNETHACK', '-DRELEASE')
-
-
 @dataclass(frozen=True)
 class CallRule:
     bucket: str
@@ -62,6 +59,16 @@ class NetHackScanner:
         self._file_lines: Dict[str, List[str]] = {}
         self._file_bytes: Dict[str, bytes] = {}
         self._current_func = 'global'
+
+    def _parse_args(self) -> List[str]:
+        include_dir = os.path.join(self.project_root, 'include')
+        src_dir = os.path.join(self.project_root, 'src')
+        args = ['-DNETHACK', '-DRELEASE']
+        if os.path.isdir(include_dir):
+            args.append(f'-I{include_dir}')
+        if os.path.isdir(src_dir):
+            args.append(f'-I{src_dir}')
+        return args
 
     @staticmethod
     def should_process_file(file_path: str) -> bool:
@@ -153,7 +160,7 @@ class NetHackScanner:
 
     def scan_file(self, file_path: str) -> None:
         # 模拟编译参数，确保 libclang 能找到头文件
-        tu = self.index.parse(file_path, args=list(PARSE_ARGS))
+        tu = self.index.parse(file_path, args=self._parse_args())
         self._load_file_cache(file_path)
 
         # 记录当前遍历到的函数名
@@ -168,7 +175,7 @@ class NetHackScanner:
 
         # Context ID: bucket+文件函数键+出现次数
         ctx_seed = f"{func_name}:{occ_key}:{idx}"
-        ctx_id = hashlib.md5(ctx_seed.encode('utf-8', errors='ignore')).hexdigest()
+        ctx_id = ctx_seed
         return idx, ctx_id
 
     def _collect_extra_string_args(self, call_args: Sequence[Any], start_idx: int, file_path: str) -> List[Dict[str, Any]]:
@@ -194,7 +201,7 @@ class NetHackScanner:
         if not raw_texts:
             return
 
-        rel_path = os.path.relpath(file_path, self.project_root)
+        rel_path = os.path.relpath(file_path, self.project_root).replace('\\', '/')
         idx, ctx_id = self._new_ctx(rel_path, rule.bucket)
         entry: Dict[str, Any] = {
             'file': rel_path,
@@ -233,10 +240,14 @@ class NetHackScanner:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Scan NetHack pline strings.')
+    parser.add_argument('--project-root', default=os.path.join(os.getcwd(), 'Nethack'),
+                        help='NetHack source tree root')
+    parser.add_argument('--output', default='nethack_strings.json',
+                        help='Output JSON path')
     parser.add_argument('--lang', choices=['en', 'zh'], default='en', help='Language key used in output JSON')
     args = parser.parse_args()
 
-    scanner = NetHackScanner(os.path.join(os.getcwd(), 'Nethack'), lang=args.lang)
+    scanner = NetHackScanner(os.path.abspath(args.project_root), lang=args.lang)
     target_dir = os.path.join(scanner.project_root, 'src')
 
     for filename in sorted(os.listdir(target_dir)):
@@ -248,7 +259,7 @@ def main() -> None:
         if scanner.should_process_file(full_path):
             scanner.scan_file(full_path)
 
-    scanner.save_json('nethack_strings.json')
+    scanner.save_json(args.output)
     total = sum(len(scanner.db[bucket]) for bucket in DB_BUCKETS)
     print(f'Done! Extracted {total} strings.')
 
