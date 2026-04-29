@@ -231,7 +231,16 @@ def main(page: ft.Page) -> None:
     filter_input = ft.TextField(label="筛选 EN / key / file", expand=True)
 
     status = ft.Text("请先加载 A/B 目录", size=13)
-    nav = ft.Text("0 / 0", size=14, weight=ft.FontWeight.BOLD)
+    nav_input = ft.TextField(
+        value="0",
+        width=72,
+        height=40,
+        text_align=ft.TextAlign.CENTER,
+        keyboard_type=ft.KeyboardType.NUMBER,
+        dense=True,
+        tooltip="输入条目序号后回车跳转",
+    )
+    nav_total = ft.Text("/ 0", size=14, weight=ft.FontWeight.BOLD)
 
     current_header = ft.Text("", selectable=True, size=13)
     current_en = ft.Text("", selectable=True, size=14, color=ft.Colors.LIGHT_BLUE_200)
@@ -278,7 +287,8 @@ def main(page: ft.Page) -> None:
     def refresh_current_panel() -> None:
         item = selected_a_entry()
         if not item:
-            nav.value = "0 / 0"
+            nav_input.value = "0"
+            nav_total.value = "/ 0"
             current_header.value = ""
             current_en.value = ""
             current_source.spans = []
@@ -286,7 +296,8 @@ def main(page: ft.Page) -> None:
             page.update()
             return
 
-        nav.value = f"{state['cursor'] + 1} / {len(state['filtered_indices'])}"
+        nav_input.value = str(state["cursor"] + 1)
+        nav_total.value = f"/ {len(state['filtered_indices'])}"
         current_header.value = (
             f"A | mode={item['mode']} key={item['key']} | {item['file']}:{item['line']} "
             f"func={item['func']} occ={item['occ']}"
@@ -563,6 +574,37 @@ def main(page: ft.Page) -> None:
         state["cursor"] = min(len(state["filtered_indices"]) - 1, state["cursor"] + 1)
         refresh_current_panel()
 
+    def on_nav_submit(_):
+        total = len(state["filtered_indices"])
+        if total <= 0:
+            nav_input.value = "0"
+            nav_total.value = "/ 0"
+            page.update()
+            return
+
+        raw = (nav_input.value or "").strip()
+        if not raw:
+            nav_input.value = str(state["cursor"] + 1)
+            page.update()
+            return
+
+        try:
+            target = int(raw)
+        except ValueError:
+            status.value = f"跳转失败: 请输入 1 到 {total} 的数字"
+            nav_input.value = str(state["cursor"] + 1)
+            page.update()
+            return
+
+        if target < 1 or target > total:
+            status.value = f"跳转失败: 请输入 1 到 {total} 的数字"
+            nav_input.value = str(state["cursor"] + 1)
+            page.update()
+            return
+
+        state["cursor"] = target - 1
+        refresh_current_panel()
+
     def on_filter_change(_):
         refresh_filter()
         refresh_current_panel()
@@ -572,6 +614,7 @@ def main(page: ft.Page) -> None:
     next_btn = ft.IconButton(ft.Icons.ARROW_FORWARD, tooltip="下一条", on_click=on_next)
 
     filter_input.on_submit = on_filter_change
+    nav_input.on_submit = on_nav_submit
     mode_filter.on_change = on_filter_change
     filter_btn = ft.OutlinedButton("应用筛选", on_click=on_filter_change)
 
@@ -621,7 +664,11 @@ def main(page: ft.Page) -> None:
 
     page.add(
         ft.Row([a_dir_input, b_dir_input, load_btn], spacing=8),
-        ft.Row([mode_filter, filter_input, filter_btn, prev_btn, nav, next_btn], spacing=8),
+        ft.Row(
+            [mode_filter, filter_input, filter_btn, prev_btn, nav_input, nav_total, next_btn],
+            spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
         ft.Row([left_panel, right_panel], expand=True, spacing=10),
         status,
     )
