@@ -182,10 +182,49 @@ def build_en_index(entries: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, An
 
 
 def safe_split_lines(text: str) -> List[str]:
-    lines = text.splitlines()
-    if not lines:
-        return [""]
-    return lines
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return normalized.split("\n")
+
+
+def merge_output_data(a_data: Dict[str, Any], existing_out: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Use latest A data as the structural base, but preserve already-saved zh/args.zh
+    from nethack_strings_a_modified.json when matching entries exist.
+    """
+    merged = copy.deepcopy(a_data)
+    if not isinstance(existing_out, dict):
+        return merged
+
+    for mode, existing_items in existing_out.items():
+        if not isinstance(existing_items, dict):
+            continue
+        target_items = merged.get(mode)
+        if not isinstance(target_items, dict):
+            continue
+
+        for key, existing_entry in existing_items.items():
+            if not isinstance(existing_entry, dict):
+                continue
+            target_entry = target_items.get(key)
+            if not isinstance(target_entry, dict):
+                continue
+
+            if "zh" in existing_entry:
+                target_entry["zh"] = copy.deepcopy(existing_entry.get("zh"))
+
+            existing_args = existing_entry.get("args")
+            target_args = target_entry.get("args")
+            if isinstance(existing_args, list) and isinstance(target_args, list):
+                for arg_i, existing_arg in enumerate(existing_args):
+                    if (
+                        0 <= arg_i < len(target_args)
+                        and isinstance(existing_arg, dict)
+                        and isinstance(target_args[arg_i], dict)
+                        and "zh" in existing_arg
+                    ):
+                        target_args[arg_i]["zh"] = copy.deepcopy(existing_arg.get("zh"))
+
+    return merged
 
 
 def main(page: ft.Page) -> None:
@@ -323,6 +362,13 @@ def main(page: ft.Page) -> None:
             return False
 
     def render_matches(a_item: Dict[str, Any]) -> None:
+        out_key = (a_item["mode"], a_item["key"])
+        current_out_entry = state["out_entry_map"].get(out_key) if out_key else None
+        current_out_zh = normalize_text_list(current_out_entry.get("zh")) if isinstance(current_out_entry, dict) else []
+        current_out_args = (
+            normalize_args_list(current_out_entry.get("args")) if isinstance(current_out_entry, dict) else []
+        )
+
         seen = set()
         matched: List[Dict[str, Any]] = []
         for en_text in a_item["en"]:
@@ -353,9 +399,10 @@ def main(page: ft.Page) -> None:
             )
             en_text = ft.Text("\n".join(m["en"]), selectable=True, color=ft.Colors.LIGHT_BLUE_100, size=13)
 
+            initial_zh = current_out_zh if current_out_zh else m["zh"]
             zh_input = ft.TextField(
                 label="手动修改 zh（每行一个元素）",
-                value="\n".join(m["zh"]),
+                value="\n".join(initial_zh),
                 multiline=True,
                 min_lines=2,
                 max_lines=6,
@@ -370,6 +417,10 @@ def main(page: ft.Page) -> None:
                     arg_idx = arg.get("idx", "")
                     arg_en = normalize_text_list(arg.get("en"))
                     arg_zh = normalize_text_list(arg.get("zh"))
+                    if arg_i < len(current_out_args):
+                        out_arg_zh = normalize_text_list(current_out_args[arg_i].get("zh"))
+                        if out_arg_zh:
+                            arg_zh = out_arg_zh
                     arg_zh_input = ft.TextField(
                         label=f"args[{arg_i}].zh（每行一个元素）",
                         value="\n".join(arg_zh),
@@ -524,6 +575,15 @@ def main(page: ft.Page) -> None:
             page.update()
             return
 
+        existing_out_data: Dict[str, Any] = {}
+        if os.path.isfile(out_json):
+            try:
+                existing_out_data = load_json(out_json)
+            except (OSError, json.JSONDecodeError) as ex:
+                status.value = f"加载已有输出文件失败: {ex}"
+                page.update()
+                return
+
         state["a_src_dir"] = a_src_dir
         state["b_src_dir"] = b_src_dir
         state["a_path"] = a_json
@@ -531,8 +591,8 @@ def main(page: ft.Page) -> None:
         state["out_path"] = out_json
         state["a_data"] = a_data
         state["b_data"] = b_data
-        state["out_data"] = copy.deepcopy(a_data)
-        state["a_entries"] = flatten_entries(a_data)
+        state["out_data"] = merge_output_data(a_data, existing_out_data)
+        state["a_entries"] = flatten_entries(state["out_data"])
         state["b_entries"] = flatten_entries(b_data)
         state["b_index"] = build_en_index(state["b_entries"])
         refresh_mode_filter_options()
