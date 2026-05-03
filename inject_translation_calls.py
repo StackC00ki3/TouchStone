@@ -280,7 +280,7 @@ def main() -> None:
     parser.add_argument("--project-root", default=os.getcwd()+"/Nethack", help="Project root directory")
     parser.add_argument("--src-dir", default="src", help="Directory to scan recursively for .c files")
     parser.add_argument("--db", default="nethack_strings.json", help="Path to merged strings JSON")
-    parser.add_argument("--translator", default="tr", help="Translator function name")
+    parser.add_argument("--translator", default="tra", help="Translator function name")
     parser.add_argument("--dry-run", action="store_true", help="Only report changes, do not write files")
     args = parser.parse_args()
 

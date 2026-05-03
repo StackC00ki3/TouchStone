@@ -186,6 +186,20 @@ def safe_split_lines(text: str) -> List[str]:
     return normalized.split("\n")
 
 
+def find_matched_entries(a_item: Dict[str, Any], b_index: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    seen = set()
+    matched: List[Dict[str, Any]] = []
+    for en_text in a_item.get("en", []):
+        for candidate in b_index.get(en_text, []):
+            uniq = (candidate["mode"], candidate["key"])
+            if uniq in seen:
+                continue
+            seen.add(uniq)
+            matched.append(candidate)
+    matched.sort(key=lambda x: (x["mode"], x["file"], x["line"], x["key"]))
+    return matched
+
+
 def merge_output_data(a_data: Dict[str, Any], existing_out: Dict[str, Any]) -> Dict[str, Any]:
     """
     Use latest A data as the structural base, but preserve already-saved zh/args.zh
@@ -369,17 +383,7 @@ def main(page: ft.Page) -> None:
             normalize_args_list(current_out_entry.get("args")) if isinstance(current_out_entry, dict) else []
         )
 
-        seen = set()
-        matched: List[Dict[str, Any]] = []
-        for en_text in a_item["en"]:
-            for candidate in state["b_index"].get(en_text, []):
-                uniq = (candidate["mode"], candidate["key"])
-                if uniq in seen:
-                    continue
-                seen.add(uniq)
-                matched.append(candidate)
-
-        matched.sort(key=lambda x: (x["mode"], x["file"], x["line"], x["key"]))
+        matched = find_matched_entries(a_item, state["b_index"])
 
         controls: List[ft.Control] = []
         controls.append(ft.Text(f"匹配项: {len(matched)}", weight=ft.FontWeight.BOLD))
@@ -669,7 +673,60 @@ def main(page: ft.Page) -> None:
         refresh_filter()
         refresh_current_panel()
 
+    def on_auto_merge_unique(_):
+        if not state["a_entries"] or not state["out_entry_map"] or not state["b_index"]:
+            status.value = "请先加载 A/B 数据"
+            page.update()
+            return
+
+        current_item = selected_a_entry()
+        current_key = (current_item.get("mode"), current_item.get("key")) if current_item else None
+
+        merged_count = 0
+        skipped_count = 0
+        for a_item in state["a_entries"]:
+            matched = find_matched_entries(a_item, state["b_index"])
+            if len(matched) != 1:
+                skipped_count += 1
+                continue
+
+            out_entry = state["out_entry_map"].get((a_item["mode"], a_item["key"]))
+            if not isinstance(out_entry, dict):
+                skipped_count += 1
+                continue
+
+            matched_entry = matched[0]["entry"]
+            out_entry["zh"] = copy.deepcopy(matched_entry.get("zh", []))
+
+            matched_args = matched_entry.get("args")
+            out_args = out_entry.get("args")
+            if isinstance(matched_args, list) and isinstance(out_args, list):
+                for arg_i, matched_arg in enumerate(matched_args):
+                    if (
+                        0 <= arg_i < len(out_args)
+                        and isinstance(matched_arg, dict)
+                        and isinstance(out_args[arg_i], dict)
+                    ):
+                        out_args[arg_i]["zh"] = copy.deepcopy(matched_arg.get("zh", []))
+
+            merged_count += 1
+
+        state["a_entries"] = flatten_entries(state["out_data"])
+        refresh_filter()
+
+        if current_key:
+            for pos, idx in enumerate(state["filtered_indices"]):
+                item = state["a_entries"][idx]
+                if (item["mode"], item["key"]) == current_key:
+                    state["cursor"] = pos
+                    break
+
+        if write_output():
+            status.value = f"一键合并完成：已合并 {merged_count} 条唯一匹配，跳过 {skipped_count} 条"
+        refresh_current_panel()
+
     load_btn = ft.FilledButton("加载 A/B", icon=ft.Icons.FOLDER_OPEN, on_click=on_load)
+    auto_merge_btn = ft.FilledButton("一键合并唯一匹配", icon=ft.Icons.AUTO_FIX_HIGH, on_click=on_auto_merge_unique)
     prev_btn = ft.IconButton(ft.Icons.ARROW_BACK, tooltip="上一条", on_click=on_prev)
     next_btn = ft.IconButton(ft.Icons.ARROW_FORWARD, tooltip="下一条", on_click=on_next)
 
@@ -723,7 +780,7 @@ def main(page: ft.Page) -> None:
     )
 
     page.add(
-        ft.Row([a_dir_input, b_dir_input, load_btn], spacing=8),
+        ft.Row([a_dir_input, b_dir_input, load_btn, auto_merge_btn], spacing=8),
         ft.Row(
             [mode_filter, filter_input, filter_btn, prev_btn, nav_input, nav_total, next_btn],
             spacing=8,

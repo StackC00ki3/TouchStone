@@ -71,7 +71,7 @@ def main() -> int:
     parser.add_argument(
         "-i",
         "--input",
-        default="nethack_strings_merged.json",
+        default="nethack_strings_translated_export.json",
         help="Input merged json path",
     )
     parser.add_argument(

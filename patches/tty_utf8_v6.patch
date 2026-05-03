@@ -1,0 +1,590 @@
+diff --git a/sys/windows/consoletty.c b/sys/windows/consoletty.c
+index 988e7663a..3e4a71427 100644
+--- a/sys/windows/consoletty.c
++++ b/sys/windows/consoletty.c
+@@ -108,20 +108,32 @@ cell_t clear_cell = {
+ };
+ cell_t undefined_cell = {
+                { CONSOLE_UNDEFINED_CHARACTER, 0, 0, 0, 0, 0, 0 },
+                 CONSOLE_UNDEFINED_CHARACTER,     /* wcharacter */
+                 0,                               /* attr */
+                 0L,                              /* color24 */
+                 0,                               /* color256idx */
+                 (const char *) 0,                /* bkcolorseq */
+                 (const char *) 0                 /* colorseq */
+ };
++
++/* Special marker cell for the second column of double-width (CJK) characters */
++cell_t wide_char_follower_cell = {
++                { 0, 0, 0, 0, 0, 0, 0 },        /* empty utf8str */
++                0,                               /* wcharacter = 0 (no display) */
++                0,                               /* attr */
++                0L,                              /* color24 */
++                0,                               /* color256idx */
++                "\x1b[0m",                       /* bkcolorseq */
++                0                                /* colorseq */
++};
++
+ #if 0
+ static const uint8 empty_utf8str[MAX_UTF8_SEQUENCE] = { 0 };
+ #endif
+ #endif /* VIRTUAL_TERMINAL_SEQUENCES */
+ 
+ /*
+  * The following WIN32 Console API routines are used in this file.
+  *
+  * CreateFile
+  * GetConsoleScreenBufferInfo
+@@ -144,20 +156,21 @@ static void xputc_core(char);
+ #else /* VIRTUAL_TERMINAL_SEQUENCES */
+ static void xputc_core(int);
+ #endif /* VIRTUAL_TERMINAL_SEQUENCES */
+ void cmov(int, int);
+ void nocmov(int, int);
+ int process_keystroke(INPUT_RECORD *, boolean *, uchar numberpad,
+                       int portdebug);
+ static void init_ttycolor(void);
+ static void really_move_cursor(void);
+ static void check_and_set_font(void);
++static boolean is_wide_character(WCHAR wch);
+ #ifndef VIRTUAL_TERMINAL_SEQUENCES
+ static boolean check_font_widths(void);
+ #endif
+ static void set_known_good_console_font(void);
+ static void restore_original_console_font(void);
+ void tty_ibmgraphics_fixup(void);
+ #ifdef VIRTUAL_TERMINAL_SEQUENCES
+ extern void (*ibmgraphics_mode_callback)(void);  /* symbols.c */
+ extern void (*utf8graphics_mode_callback)(void); /* symbols.c */
+ #endif /* VIRTUAL_TERMINAL_SEQUENCES */
+@@ -1016,28 +1029,56 @@ static void buffer_clear_to_end_of_line(cell_t * buffer, int x, int y)
+     cell_t * dst = buffer + console.width * y + x;
+     cell_t *sentinel = buffer + console.width * (y + 1);
+ 
+     while (dst != sentinel)
+         *dst++ = clear_cell;
+ 
+     if (iflags.debug.immediateflips || !program_state.in_moveloop)
+         back_buffer_flip();
+ }
+ 
++static boolean
++is_wide_character(WCHAR wch)
++{
++    /* Check for CJK character ranges */
++    if ((wch >= 0x3040 && wch <= 0x309F)  /* Hiragana */
++        || (wch >= 0x30A0 && wch <= 0x30FF)  /* Katakana */
++        || (wch >= 0x3400 && wch <= 0x4DBF)  /* CJK Unified Ideographs Extension A */
++        || (wch >= 0x4E00 && wch <= 0x9FFF)  /* CJK Unified Ideographs */
++        || (wch >= 0xAC00 && wch <= 0xD7AF)  /* Hangul Syllables */
++        || (wch >= 0xFF00 && wch <= 0xFFEF)  /* Halfwidth and Fullwidth Forms */
++        || (wch > 0xFF)) {  /* Characters with code > 0xFF (extended Unicode) */
++        return TRUE;
++    }
++    return FALSE;
++}
++
+ void buffer_write(cell_t * buffer, cell_t * cell, COORD pos)
+ {
+     nhassert(pos.X >= 0 && pos.X < console.width);
+     nhassert(pos.Y >= 0 && pos.Y < console.height);
+ 
+     cell_t * dst = buffer + (console.width * pos.Y) + pos.X;
+     *dst = *cell;
+ 
++    /* For CJK (Chinese, Japanese, Korean) double-width characters,
++       mark the following column as a wide-character follower cell.
++       This prevents display corruption when the window is closed or redrawn.
++    */
++    if (is_wide_character(cell->wcharacter)) {
++        if (pos.X + 1 < console.width) {
++            /* Mark the next column as a follower of the wide character */
++            cell_t * next_cell = dst + 1;
++            *next_cell = wide_char_follower_cell;
++        }
++    }
++
+     if ((iflags.debug.immediateflips || !program_state.in_moveloop)
+         && buffer == console.back_buffer)
+         back_buffer_flip();
+ }
+ 
+ /*
+  * Called after returning from ! or ^Z
+  */
+ void
+ gettty(void)
+@@ -1455,27 +1496,37 @@ xputc_core(int ch)
+                                  : ttycolors[console.current_nhcolor];
+         if (console.current_nhattr[ATR_BOLD])
+             console.attr |=
+                 (inverse) ? BACKGROUND_INTENSITY : FOREGROUND_INTENSITY;
+ 
+         cell.attribute = console.attr;
+         cell.character = (console.has_unicode ? console.cpMap[ch] : ch);
+ #endif
+         if (ccount) {
+             buffer_write(console.back_buffer, &cell, console.cursor);
+-            if (console.cursor.X == console.width - 1) {
++            
++            /* For wide characters (CJK), cursor should advance by 2 columns */
++            int cursor_advance = 1;
++            if (console.has_unicode) {
++                /* Check wch[0] which contains the wide character value */
++                if (is_wide_character(wch[0])) {
++                    cursor_advance = 2;
++                }
++            }
++            
++            if (console.cursor.X + cursor_advance >= console.width) {
+                 if (console.cursor.Y < console.height - 1) {
+                     console.cursor.X = 1;
+                     console.cursor.Y++;
+                 }
+             } else {
+-                console.cursor.X++;
++                console.cursor.X += cursor_advance;
+             }
+         }
+     }
+     nhassert(console.cursor.X >= 0 && console.cursor.X < console.width);
+     nhassert(console.cursor.Y >= 0 && console.cursor.Y < console.height);
+ }
+ 
+ /*
+  * Overrides wintty.c function of the same name
+  * for win32. It is used for glyphs only, not text.
+diff --git a/win/tty/topl.c b/win/tty/topl.c
+index c20dfa288..6e828029a 100644
+--- a/win/tty/topl.c
++++ b/win/tty/topl.c
+@@ -3,22 +3,28 @@
+ /*-Copyright (c) Michael Allison, 2009. */
+ /* NetHack may be freely redistributed.  See license for details. */
+ 
+ #include "hack.h"
+ 
+ #ifdef TTY_GRAPHICS
+ 
+ #include "tcap.h"
+ #include "wintty.h"
+ 
++#ifdef WIN32CON
++#include <Windows.h>
++#endif
++
+ static void redotoplin(const char *);
+ static void topl_putsym(char);
++static void topl_putsymw(unsigned short c);
++static int is_utf8(const char *str);
+ static void removetopl(int);
+ static void msghistory_snapshot(boolean);
+ static void free_msghistory_snapshot(boolean);
+ 
+ int
+ tty_doprev_message(void)
+ {
+     struct WinDesc *cw = wins[WIN_MESSAGE];
+     winid prevmsg_win;
+     int i;
+@@ -336,25 +342,127 @@ topl_putsym(char c)
+         ttyDisplay->curx++;
+     }
+     cw->curx = ttyDisplay->curx;
+     if (cw->curx == 0)
+         cl_end();
+ #ifndef WIN32CON
+     (void) putchar(c);
+ #endif
+ }
+ 
++/* output a wide character (UTF-16-LE) to the topline message window */
++static void
++topl_putsymw(unsigned short c)
++{
++    struct WinDesc *cw = wins[WIN_MESSAGE];
++
++    if (cw == (struct WinDesc *) 0)
++        panic("Putsymw window MESSAGE nonexistent");
++
++    /* handle backspace for wide character */
++    if (c == '\b') {
++        if (ttyDisplay->curx == 0 && ttyDisplay->cury > 0)
++            tty_curs(BASE_WINDOW, CO, (int) ttyDisplay->cury - 1);
++        backsp();
++        nhassert(ttyDisplay->curx > 0);
++        ttyDisplay->curx--;
++        cw->curx = ttyDisplay->curx;
++        return;
++    }
++
++    /* handle newline for wide character */
++    if (c == '\n') {
++        cl_end();
++        ttyDisplay->curx = 0;
++        ttyDisplay->cury++;
++        cw->cury = ttyDisplay->cury;
++#ifdef WIN32CON
++        (void) putchar('\n');
++#endif
++        cw->curx = ttyDisplay->curx;
++        if (cw->curx == 0)
++            cl_end();
++#ifndef WIN32CON
++        (void) putchar('\n');
++#endif
++        return;
++    }
++
++    /* normal wide character output */
++    if (ttyDisplay->curx == CO - 1)
++        topl_putsymw('\n'); /* wrap to next line if at end */
++
++#ifdef WIN32CON
++    /* putchar supports wide characters, just pass the wchar_t */
++    (void) putchar(c);
++#endif
++    ttyDisplay->curx += c > 0xff ? 2 : 1;
++    cw->curx = ttyDisplay->curx;
++    if (cw->curx == 0)
++        cl_end();
++#ifndef WIN32CON
++    (void) putchar((char) c);
++#endif
++}
++
++
++/* detect if a string contains UTF-8 encoded characters */
++static int
++is_utf8(const char *str)
++{
++    unsigned char *ustr = (unsigned char *) str;
++
++    if (!str || !*str)
++        return 0;
++
++    /* check for high-bit bytes (UTF-8 multi-byte sequences) */
++    while (*ustr) {
++        if (*ustr & 0x80)  /* high bit set indicates UTF-8 multi-byte */
++            return 1;
++        ustr++;
++    }
++    return 0;
++}
++
+ void
+ putsyms(const char *str)
+ {
++#ifdef WIN32CON
++    /* check if string contains UTF-8 encoded characters */
++    if (is_utf8(str)) {
++        /* convert UTF-8 to wide characters and output */
++
++        /* First, get the required size in wide characters */
++        int wlen = MultiByteToWideChar(CP_UTF8, 0, str, -1, NULL, 0);
++
++        if (wlen > 0) {
++            wchar_t *wstr = (wchar_t *) alloc(wlen * sizeof(wchar_t));
++            /* Now convert the UTF-8 string to wide characters */
++            wlen = MultiByteToWideChar(CP_UTF8, 0, str, -1, wstr, wlen);
++
++            if (wlen > 0) {
++                int i;
++                for (i = 0; i < wlen - 1; ++i) /* -1 to skip null terminator */
++                    topl_putsymw((short) wstr[i]);
++            }
++            free((genericptr_t) wstr);
++        }
++
++    } else {
++        /* process regular ANSI string */
++        while (*str)
++            topl_putsym(*str++);
++    }
++#else
+     while (*str)
+         topl_putsym(*str++);
++#endif
+ }
+ 
+ static void
+ removetopl(int n)
+ {
+     /* assume addtopl() has been done, so ttyDisplay->toplin is already set */
+     while (n-- > 0)
+         putsyms("\b \b");
+ }
+ 
+diff --git a/win/tty/wintty.c b/win/tty/wintty.c
+index fb9ec4dbf..1d3abc281 100644
+--- a/win/tty/wintty.c
++++ b/win/tty/wintty.c
+@@ -13,20 +13,24 @@
+ #define H2344_BROKEN
+ 
+ #include "hack.h"
+ 
+ #ifdef TTY_GRAPHICS
+ #include "dlb.h"
+ 
+ /* leave this undefined; it produces bad screen output with rxvt-unicode */
+ /*#define DECgraphicsOptimization*/
+ 
++#ifdef WIN32CON
++#include <Windows.h>
++#endif
++
+ #ifdef MAC
+ #define MICRO /* The Mac is a MICRO only for this file, not in general! */
+ #ifdef THINK_C
+ extern void msmsg(const char *, ...);
+ #endif
+ #endif
+ 
+ #ifndef NO_TERMS
+ #include "tcap.h"
+ #endif
+@@ -1317,20 +1321,38 @@ toggle_menu_attr(boolean on, int color, int attr)
+         term_start_attr(attr);
+         if (color != NO_COLOR)
+             term_start_color(color);
+     } else {
+         if (color != NO_COLOR)
+             term_end_color();
+         term_end_attr(attr);
+     }
+ }
+ 
++/* detect if a string contains UTF-8 encoded characters */
++static int
++is_utf8(const char *str)
++{
++    unsigned char *ustr = (unsigned char *) str;
++
++    if (!str || !*str)
++        return 0;
++
++    /* check for high-bit bytes (UTF-8 multi-byte sequences) */
++    while (*ustr) {
++        if (*ustr & 0x80) /* high bit set indicates UTF-8 multi-byte */
++            return 1;
++        ustr++;
++    }
++    return 0;
++}
++
+ static void
+ process_menu_window(winid window, struct WinDesc *cw)
+ {
+     tty_menu_item *page_start, *page_end, *curr;
+     long count;
+     int n, attr_n, curr_page, page_lines, resp_len, previous_page_lines;
+     boolean finished, counting, reset_count, show_obj_syms,
+             only_if_no_headers = (iflags.menuobjsyms & 4) != 0;
+     char *cp, *rp, resp[QBUFSZ], gacc[QBUFSZ], *msave, *morestr, really_morc;
+ #define MENU_EXPLICIT_CHOICE 0x7f /* pseudo menu manipulation char */
+@@ -1474,21 +1496,54 @@ process_menu_window(winid window, struct WinDesc *cw)
+                                    && show_obj_syms
+                                    && curr->glyphinfo.glyph != NO_GLYPH) {
+                             int gcolor = curr->glyphinfo.gm.sym.color;
+ 
+                             /* tty_print_glyph could be used, but is overkill
+                                and requires referencing the cursor location */
+                             toggle_menu_attr(TRUE, gcolor, ATR_NONE);
+                             (void) putchar(curr->glyphinfo.ttychar);
+                             toggle_menu_attr(FALSE, gcolor, ATR_NONE);
+                         } else {
++#ifdef WIN32CON
++                            for (char *cp2 = cp; *cp2 && (int) ttyDisplay->curx < (int) ttyDisplay->cols; cp2++) 
++                            {
++                                if (is_utf8(cp2)) {
++                                    int wlen = MultiByteToWideChar(CP_UTF8, 0, cp2, -1, NULL, 0);
++
++                                    if (wlen > 0) {
++                                        wchar_t *wstr = (wchar_t *) alloc(wlen * sizeof(wchar_t));
++                                        /* Now convert the UTF-8 string to wide characters */
++                                        wlen = MultiByteToWideChar(CP_UTF8, 0, cp2, -1, wstr, wlen);
++
++                                        if (wlen > 0) {
++                                            int j;
++                                            for (j = 0; j < wlen - 1; ++j) {
++                                                int charWidth = wstr[j] > 0xff ? 2 : 1;
++                                                if ((int) ttyDisplay->curx + charWidth > (int) ttyDisplay->cols) break;
++                                                (void) putchar((unsigned short) wstr[j]);
++                                                ttyDisplay->curx += charWidth;
++                                            }
++                                        }
++                                        free((genericptr_t) wstr);
++                                        cp = cp2 + strlen(cp2) - 1;
++                                        break;
++                                    }
++                                } else {
++                                    if ((int) ttyDisplay->curx + 1 > (int) ttyDisplay->cols) break;
++                                    (void) putchar(*cp2);
++                                    cp = cp2;
++                                    ttyDisplay->curx++;
++                                }
++                            }
++#else
+                             (void) putchar(*cp);
++#endif
+                         }
+                     } /* for *cp */
+                     if (n > attr_n && (color != NO_COLOR || attr != ATR_NONE))
+                         toggle_menu_attr(FALSE, color, attr);
+                 } /* if npages > 0 */
+             } else {
+                 page_start = 0;
+                 page_end = 0;
+                 page_lines = 0;
+             }
+@@ -1812,29 +1867,95 @@ process_text_window(winid window, struct WinDesc *cw)
+                  *cp && (int) ttyDisplay->curx < (int) ttyDisplay->cols;
+                  cp++, ttyDisplay->curx++
+ #endif
+                  ) {
+                 /* message recall for msg_window:full/combination/reverse
+                    might have output from '/' in it (see redotoplin()) */
+                 if (linestart) {
+                     if (SYMHANDLING(H_UTF8)) {
+                         /* FIXME: what is actually in that line? is it the \GNNNNNNNN or UTF-8? */
+                         g_putch(*cp);
+-                    } else if ((*cp & 0x80) != 0) {
+-                        g_putch(*cp);
+-                        end_glyphout();
++                    //} else if ((*cp & 0x80) != 0) {
++                    //    g_putch(*cp);
++                    //    end_glyphout();
+                     } else {
++#ifdef WIN32CON
++                        for (char *cp2 = cp; *cp2 && (int) ttyDisplay->curx < (int) ttyDisplay->cols; cp2++) 
++                        {
++                            if (is_utf8(cp2)) {
++                                int wlen = MultiByteToWideChar(CP_UTF8, 0, cp2, -1, NULL, 0);
++
++                                if (wlen > 0) {
++                                    wchar_t *wstr = (wchar_t *) alloc(wlen * sizeof(wchar_t));
++                                    /* Now convert the UTF-8 string to wide characters */
++                                    wlen = MultiByteToWideChar(CP_UTF8, 0, cp2, -1, wstr, wlen);
++
++                                    if (wlen > 0) {
++                                        int j;
++                                        for (j = 0; j < wlen - 1; ++j) {
++                                            int charWidth = wstr[j] > 0xff ? 2 : 1;
++                                            if ((int) ttyDisplay->curx + charWidth > (int) ttyDisplay->cols) break;
++                                            (void) putchar((unsigned short) wstr[j]);
++                                            ttyDisplay->curx += charWidth;
++                                        }
++                                    }
++                                    free((genericptr_t) wstr);
++                                    cp = cp2 + strlen(cp2) - 1;
++                                    break;
++                                }
++                            } else {
++                                if ((int) ttyDisplay->curx + 1 > (int) ttyDisplay->cols) break;
++                                (void) putchar(*cp2);
++                                cp = cp2;
++                                ttyDisplay->curx++;
++                            }
++                        }
++#else
+                         (void) putchar(*cp);
++#endif
+                     }
+                     linestart = FALSE;
+                 } else {
++#ifdef WIN32CON
++                    for (char *cp2 = cp; *cp2 && (int) ttyDisplay->curx < (int) ttyDisplay->cols; cp2++) 
++                    {
++                        if (is_utf8(cp2)) {
++                            int wlen = MultiByteToWideChar(CP_UTF8, 0, cp2, -1, NULL, 0);
++
++                            if (wlen > 0) {
++                                wchar_t *wstr = (wchar_t *) alloc(wlen * sizeof(wchar_t));
++                                /* Now convert the UTF-8 string to wide characters */
++                                wlen = MultiByteToWideChar(CP_UTF8, 0, cp2, -1, wstr, wlen);
++
++                                if (wlen > 0) {
++                                    int j;
++                                    for (j = 0; j < wlen - 1; ++j) {
++                                        int charWidth = wstr[j] > 0xff ? 2 : 1;
++                                        if ((int) ttyDisplay->curx + charWidth > (int) ttyDisplay->cols) break;
++                                        (void) putchar((unsigned short) wstr[j]);
++                                        ttyDisplay->curx += charWidth;
++                                    }
++                                }
++                                free((genericptr_t) wstr);
++                                cp = cp2 + strlen(cp2) - 1;
++                                break;
++                            }
++                        } else {
++                            if ((int) ttyDisplay->curx + 1 > (int) ttyDisplay->cols) break;
++                            (void) putchar(*cp2);
++                            cp = cp2;
++                            ttyDisplay->curx++;
++                        }
++                    }
++#else
+                     (void) putchar(*cp);
++#endif
+                 }
+             }
+             term_end_attr(attr);
+         }
+     }
+     if (i == cw->maxrow) {
+ #ifdef H2344_BROKEN
+         if (cw->type == NHW_TEXT) {
+             tty_curs(BASE_WINDOW, 1, (int) ttyDisplay->cury + 1);
+             cl_eos();
+@@ -4806,20 +4927,50 @@ tty_putstatusfield(const char *text, int x, int y)
+ 
+     ncols = cw->cols;
+     nrows = cw->maxrow;
+     lth = (int) strlen(text);
+ 
+     print_vt_code2(AVTC_SELECT_WINDOW, NHW_STATUS);
+ 
+     if (x < ncols && y < nrows) {
+         if (x != cw->curx || y != cw->cury)
+             tty_curs(NHW_STATUS, x, y);
++#ifdef WIN32CON
++        if (is_utf8(text)) {
++            int wlen = MultiByteToWideChar(CP_UTF8, 0, text, -1, NULL, 0);
++
++            if (wlen > 0) {
++                wchar_t *wstr = (wchar_t *) alloc(wlen * sizeof(wchar_t));
++
++                wlen = MultiByteToWideChar(CP_UTF8, 0, text, -1, wstr, wlen);
++                if (wlen > 0) {
++                    for (i = 0, n = x; i < wlen - 1 && n < ncols; ++i) {
++                        int charWidth = (wstr[i] > 0xff) ? 2 : 1;
++
++                        if (n + charWidth - 1 >= ncols)
++                            break;
++                        (void) putchar((unsigned short) wstr[i]);
++                        ttyDisplay->curx += charWidth;
++                        cw->curx += charWidth;
++                        cw->data[y][n - 1] = (wstr[i] <= 0x7f)
++                                               ? (char) wstr[i]
++                                               : ' ';
++                        if (charWidth > 1 && n < ncols)
++                            cw->data[y][n] = ' ';
++                        n += charWidth;
++                    }
++                }
++                free((genericptr_t) wstr);
++                return;
++            }
++        }
++#endif
+         for (i = 0; i < lth; ++i) {
+             n = i + x;
+             if (n < ncols && *text) {
+                 (void) putchar(*text);
+                 ttyDisplay->curx++;
+                 cw->curx++;
+                 cw->data[y][n - 1] = *text;
+                 text++;
+             }
+         }
