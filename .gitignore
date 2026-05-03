@@ -1,1 +1,4 @@
 .vscode/
+lib/
+__pycache__/
+instance/
