@@ -157,15 +157,15 @@ def main():
         print("Step 2 failed: patcher.py returned non-zero exit code")
         return 1
     
-    # Step 3: Apply tty_utf8_v4.patch
+    # Step 3: Apply tty_utf8_v6.patch
     print("\n" + "=" * 30)
-    print("Step 3: Applying tty_utf8_v4.patch...")
+    print("Step 3: Applying tty_utf8_v6.patch...")
     print("=" * 30)
     
     cmd = [
         sys.executable,
         "patcher.py",
-        ".\\patches\\tty_utf8_v4.patch",
+        ".\\patches\\tty_utf8_v6.patch",
         "--base-dir", ".\\Nethack\\"
     ]
     if args.verbose:
