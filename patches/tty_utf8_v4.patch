@@ -175,7 +175,7 @@ index c20dfa288..6e828029a 100644
 +
  static void redotoplin(const char *);
  static void topl_putsym(char);
-+static void topl_putsymw(short c);
++static void topl_putsymw(unsigned short c);
 +static int is_utf8(const char *str);
  static void removetopl(int);
  static void msghistory_snapshot(boolean);
@@ -200,7 +200,7 @@ index c20dfa288..6e828029a 100644
  
 +/* output a wide character (UTF-16-LE) to the topline message window */
 +static void
-+topl_putsymw(short c)
++topl_putsymw(unsigned short c)
 +{
 +    struct WinDesc *cw = wins[WIN_MESSAGE];
 +
