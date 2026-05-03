@@ -27,6 +27,8 @@ C_KEYWORDS = {
 TOKEN_RE = re.compile(
     r"//.*|/\*.*?\*/|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\b[A-Za-z_][A-Za-z0-9_]*\b"
 )
+PRINTF_CONV_CHARS = set("diuoxXfFeEgGaAcCsSpn")
+PRINTF_FLAG_CHARS = set("-+ #0'")
 
 
 def load_json(path: str) -> Dict[str, Any]:
@@ -68,6 +70,95 @@ def normalize_args_list(value: Any) -> List[Dict[str, Any]]:
         item["zh"] = normalize_array_text_list(x.get("zh"))
         out.append(item)
     return out
+
+
+def count_printf_placeholders(text: str) -> int:
+    total = 0
+    i = 0
+    n = len(text)
+
+    while i < n:
+        if text[i] != "%":
+            i += 1
+            continue
+
+        if i + 1 < n and text[i + 1] == "%":
+            i += 2
+            continue
+
+        i += 1
+
+        while i < n and text[i].isdigit():
+            i += 1
+        if i < n and text[i] == "$":
+            i += 1
+
+        while i < n and text[i] in PRINTF_FLAG_CHARS:
+            i += 1
+
+        if i < n and text[i] == "*":
+            total += 1
+            i += 1
+            while i < n and text[i].isdigit():
+                i += 1
+            if i < n and text[i] == "$":
+                i += 1
+        else:
+            while i < n and text[i].isdigit():
+                i += 1
+
+        if i < n and text[i] == ".":
+            i += 1
+            if i < n and text[i] == "*":
+                total += 1
+                i += 1
+                while i < n and text[i].isdigit():
+                    i += 1
+                if i < n and text[i] == "$":
+                    i += 1
+            else:
+                while i < n and text[i].isdigit():
+                    i += 1
+
+        if i + 2 <= n and text[i:i + 3] in ("I32", "I64"):
+            i += 3
+        elif i + 1 < n and text[i:i + 2] in ("hh", "ll"):
+            i += 2
+        elif i < n and text[i] in "hljztLq":
+            i += 1
+
+        if i < n and text[i] in PRINTF_CONV_CHARS:
+            total += 1
+            i += 1
+
+    return total
+
+
+def has_compatible_printf_placeholders(en_value: Any, zh_value: Any) -> bool:
+    en_list = normalize_text_list(en_value)
+    zh_list = normalize_text_list(zh_value)
+    if len(en_list) != len(zh_list):
+        return False
+    return all(
+        count_printf_placeholders(en_text) == count_printf_placeholders(zh_text)
+        for en_text, zh_text in zip(en_list, zh_list)
+    )
+
+
+def entry_has_compatible_printf_placeholders(en_entry: Dict[str, Any], zh_entry: Dict[str, Any]) -> bool:
+    if not has_compatible_printf_placeholders(en_entry.get("en"), zh_entry.get("zh")):
+        return False
+
+    en_args = normalize_args_list(en_entry.get("args"))
+    zh_args = normalize_args_list(zh_entry.get("args"))
+    if len(en_args) != len(zh_args):
+        return False
+
+    for en_arg, zh_arg in zip(en_args, zh_args):
+        if not has_compatible_printf_placeholders(en_arg.get("en"), zh_arg.get("zh")):
+            return False
+
+    return True
 
 
 def read_source_lines(base_path: str, rel_file: str, target_line: int) -> Tuple[List[str], int]:
@@ -684,6 +775,7 @@ def main(page: ft.Page) -> None:
 
         merged_count = 0
         skipped_count = 0
+        format_mismatch_count = 0
         for a_item in state["a_entries"]:
             matched = find_matched_entries(a_item, state["b_index"])
             if len(matched) != 1:
@@ -696,6 +788,11 @@ def main(page: ft.Page) -> None:
                 continue
 
             matched_entry = matched[0]["entry"]
+            if not entry_has_compatible_printf_placeholders(out_entry, matched_entry):
+                skipped_count += 1
+                format_mismatch_count += 1
+                continue
+
             out_entry["zh"] = copy.deepcopy(matched_entry.get("zh", []))
 
             matched_args = matched_entry.get("args")
@@ -722,7 +819,10 @@ def main(page: ft.Page) -> None:
                     break
 
         if write_output():
-            status.value = f"一键合并完成：已合并 {merged_count} 条唯一匹配，跳过 {skipped_count} 条"
+            status.value = (
+                f"一键合并完成：已合并 {merged_count} 条唯一匹配，"
+                f"跳过 {skipped_count} 条（其中 {format_mismatch_count} 条因格式化参数数量不一致）"
+            )
         refresh_current_panel()
 
     load_btn = ft.FilledButton("加载 A/B", icon=ft.Icons.FOLDER_OPEN, on_click=on_load)
