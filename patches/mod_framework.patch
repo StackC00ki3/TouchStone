@@ -1,44 +1,23 @@
 diff --git a/include/hack.h b/include/hack.h
-index f655a8961..5d1d16a55 100644
+index acf93509b..b43b1c8f6 100644
 --- a/include/hack.h
 +++ b/include/hack.h
-@@ -88,20 +88,24 @@
- 
- /* max size of a windowtype option */
- #define WINTYPELEN 16
- 
- /* str_or_len from sp_lev.h */
- typedef union str_or_len {
-     char *str;
+@@ -95,6 +95,10 @@ typedef union str_or_len {
      int len;
  } Str_or_Len;
  
 +/* translation lookup: returns translated text for key, or fallback if absent */
-+const char *tr(const char *key, const char *fallback);
++const char *tra(const char *key, const char *fallback);
 +void nh_mod_init(void);
 +
  enum artifacts_nums {
  #define ARTI_ENUM
  #include "artilist.h"
- #undef ARTI_ENUM
-     AFTER_LAST_ARTIFACT
- };
- 
- enum misc_arti_nums {
-     NROFARTIFACTS = (AFTER_LAST_ARTIFACT - 1)
- };
 diff --git a/src/allmain.c b/src/allmain.c
-index efa2e42e7..5d273166b 100644
+index 280beb39a..a154bf859 100644
 --- a/src/allmain.c
 +++ b/src/allmain.c
-@@ -34,20 +34,21 @@ early_init(int argc USED_FOR_CRASHREPORT, char *argv[] USED_FOR_CRASHREPORT)
- {
- #ifdef CRASHREPORT
-     /* Do this as early as possible, but let ports do other things first. */
-     crashreport_init(argc, argv);
- #endif
-     decl_globals_init();
-     objects_globals_init();
+@@ -42,6 +42,7 @@ early_init(int argc USED_FOR_CRASHREPORT, char *argv[] USED_FOR_CRASHREPORT)
      monst_globals_init();
      sys_early_init();
      runtime_info_init();
@@ -46,22 +25,11 @@ index efa2e42e7..5d273166b 100644
  }
  
  staticfn void
- moveloop_preamble(boolean resuming)
- {
-     /* if a save file created in normal mode is now being restored in
-        explore mode, treat it as normal restore followed by 'X' command
-        to use up the save file and require confirmation for explore mode */
-     if (resuming && iflags.deferred_X)
-         (void) enter_explore_mode();
 diff --git a/src/hack.c b/src/hack.c
-index ebdc126c2..fa0d3183a 100644
+index 4dfca4006..cc27ce987 100644
 --- a/src/hack.c
 +++ b/src/hack.c
-@@ -1,17 +1,26 @@
- /* NetHack 3.7	hack.c	$NHDT-Date: 1763708572 2025/11/20 23:02:52 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.494 $ */
- /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
- /*-Copyright (c) Derek S. Ray, 2015. */
- /* NetHack may be freely redistributed.  See license for details. */
+@@ -5,6 +5,15 @@
  
  #include "hack.h"
  #include "extern.h"
@@ -77,21 +45,7 @@ index ebdc126c2..fa0d3183a 100644
  
  /* #define DEBUG */ /* uncomment for debugging */
  
- staticfn boolean could_move_onto_boulder(coordxy, coordxy);
- staticfn void dopush(coordxy, coordxy, coordxy, coordxy, struct obj *,
-                      boolean);
- staticfn void cannot_push_msg(struct obj *, coordxy, coordxy);
- staticfn int cannot_push(struct obj *, coordxy, coordxy);
- staticfn void rock_disappear_msg(struct obj *);
- staticfn void moverock_done(coordxy, coordxy);
-@@ -44,38 +53,259 @@ staticfn boolean carrying_too_much(void);
- staticfn boolean escape_from_sticky_mon(coordxy, coordxy);
- staticfn void domove_core(void);
- staticfn void maybe_smudge_engr(coordxy, coordxy, coordxy, coordxy);
- staticfn struct monst *monstinroom(struct permonst *, int) NONNULLARG1;
- staticfn boolean furniture_present(int, int);
- staticfn void move_update(boolean);
- staticfn int pickup_checks(void);
+@@ -51,6 +60,12 @@ staticfn int pickup_checks(void);
  staticfn void maybe_wail(void);
  staticfn boolean water_turbulence(coordxy *, coordxy *);
  staticfn int QSORTCALLBACK cmp_weights(const void *, const void *);
@@ -104,18 +58,7 @@ index ebdc126c2..fa0d3183a 100644
  
  #define IS_SHOP(x) (svr.rooms[x].rtype >= SHOPBASE)
  
- /* XXX: if more sources of water walking than just boots are added,
-    cause_known(insight.c) should be externified and used for this */
- #define Known_wwalking \
-     (uarmf && uarmf->otyp == WATER_WALKING_BOOTS \
-      && objects[WATER_WALKING_BOOTS].oc_name_known \
-      && !u.usteed)
- #define Known_lwalking \
-     (Known_wwalking && Fire_resistance \
-      && uarmf->oerodeproof && uarmf->rknown)
- 
- /* mode values for findtravelpath() */
- #define TRAVP_TRAVEL 0
+@@ -69,6 +84,221 @@ staticfn int QSORTCALLBACK cmp_weights(const void *, const void *);
  #define TRAVP_GUESS  1
  #define TRAVP_VALID  2
  
@@ -319,7 +262,7 @@ index ebdc126c2..fa0d3183a 100644
 +}
 +
 +const char *
-+tr(const char *key, const char *fallback)
++tra(const char *key, const char *fallback)
 +{
 +    if (!key || !*key)
 +        return fallback;
@@ -337,10 +280,3 @@ index ebdc126c2..fa0d3183a 100644
  anything *
  uint_to_any(unsigned ui)
  {
-     gt.tmp_anything = cg.zeroany;
-     gt.tmp_anything.a_uint = ui;
-     return &gt.tmp_anything;
- }
- 
- anything *
- long_to_any(long lng)

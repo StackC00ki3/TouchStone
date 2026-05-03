@@ -1,5 +1,5 @@
 diff --git a/sys/windows/consoletty.c b/sys/windows/consoletty.c
-index 988e7663a..b168707b5 100644
+index 5b5b77070..6dad9f749 100644
 --- a/sys/windows/consoletty.c
 +++ b/sys/windows/consoletty.c
 @@ -115,6 +115,18 @@ cell_t undefined_cell = {
@@ -29,7 +29,7 @@ index 988e7663a..b168707b5 100644
  #ifndef VIRTUAL_TERMINAL_SEQUENCES
  static boolean check_font_widths(void);
  #endif
-@@ -1023,6 +1036,32 @@ static void buffer_clear_to_end_of_line(cell_t * buffer, int x, int y)
+@@ -879,6 +892,32 @@ static void buffer_clear_to_end_of_line(cell_t * buffer, int x, int y)
          back_buffer_flip();
  }
  
@@ -62,7 +62,7 @@ index 988e7663a..b168707b5 100644
  void buffer_write(cell_t * buffer, cell_t * cell, COORD pos)
  {
      nhassert(pos.X >= 0 && pos.X < console.width);
-@@ -1031,6 +1070,18 @@ void buffer_write(cell_t * buffer, cell_t * cell, COORD pos)
+@@ -887,6 +926,18 @@ void buffer_write(cell_t * buffer, cell_t * cell, COORD pos)
      cell_t * dst = buffer + (console.width * pos.Y) + pos.X;
      *dst = *cell;
  
@@ -81,7 +81,7 @@ index 988e7663a..b168707b5 100644
      if ((iflags.debug.immediateflips || !program_state.in_moveloop)
          && buffer == console.back_buffer)
          back_buffer_flip();
-@@ -1462,13 +1513,23 @@ xputc_core(int ch)
+@@ -1318,13 +1369,23 @@ xputc_core(int ch)
  #endif
          if (ccount) {
              buffer_write(console.back_buffer, &cell, console.cursor);
@@ -108,7 +108,7 @@ index 988e7663a..b168707b5 100644
          }
      }
 diff --git a/win/tty/topl.c b/win/tty/topl.c
-index c20dfa288..84ac4a0fe 100644
+index a216b3435..c850364ee 100644
 --- a/win/tty/topl.c
 +++ b/win/tty/topl.c
 @@ -10,8 +10,14 @@
@@ -241,7 +241,7 @@ index c20dfa288..84ac4a0fe 100644
  
  static void
 diff --git a/win/tty/wintty.c b/win/tty/wintty.c
-index fb9ec4dbf..5335d26ba 100644
+index e7e11e9f2..bc5d24b9a 100644
 --- a/win/tty/wintty.c
 +++ b/win/tty/wintty.c
 @@ -20,6 +20,10 @@
@@ -252,10 +252,10 @@ index fb9ec4dbf..5335d26ba 100644
 +#include <Windows.h>
 +#endif
 +
- #ifdef MAC
+ #ifdef MACOS9
  #define MICRO /* The Mac is a MICRO only for this file, not in general! */
  #ifdef THINK_C
-@@ -1324,6 +1328,67 @@ toggle_menu_attr(boolean on, int color, int attr)
+@@ -1325,6 +1329,67 @@ toggle_menu_attr(boolean on, int color, int attr)
      }
  }
  
@@ -323,7 +323,7 @@ index fb9ec4dbf..5335d26ba 100644
  static void
  process_menu_window(winid window, struct WinDesc *cw)
  {
-@@ -1481,7 +1546,23 @@ process_menu_window(winid window, struct WinDesc *cw)
+@@ -1482,7 +1547,23 @@ process_menu_window(winid window, struct WinDesc *cw)
                              (void) putchar(curr->glyphinfo.ttychar);
                              toggle_menu_attr(FALSE, gcolor, ATR_NONE);
                          } else {
@@ -347,7 +347,7 @@ index fb9ec4dbf..5335d26ba 100644
                          }
                      } /* for *cp */
                      if (n > attr_n && (color != NO_COLOR || attr != ATR_NONE))
-@@ -1819,15 +1900,47 @@ process_text_window(winid window, struct WinDesc *cw)
+@@ -1820,15 +1901,47 @@ process_text_window(winid window, struct WinDesc *cw)
                      if (SYMHANDLING(H_UTF8)) {
                          /* FIXME: what is actually in that line? is it the \GNNNNNNNN or UTF-8? */
                          g_putch(*cp);
@@ -398,7 +398,7 @@ index fb9ec4dbf..5335d26ba 100644
                  }
              }
              term_end_attr(attr);
-@@ -4813,6 +4926,36 @@ tty_putstatusfield(const char *text, int x, int y)
+@@ -4818,6 +4931,36 @@ tty_putstatusfield(const char *text, int x, int y)
      if (x < ncols && y < nrows) {
          if (x != cw->curx || y != cw->cury)
              tty_curs(NHW_STATUS, x, y);
