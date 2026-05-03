@@ -197,7 +197,9 @@ def find_context_lines_in_file(file_path: str, context_lines: List[str], start_l
     return None
 
 
-def apply_hunk(file_path: str, hunk: Hunk, dry_run: bool = False, verbose: bool = False) -> Tuple[bool, str]:
+def apply_hunk(file_path: str, hunk: Hunk, dry_run: bool = False,
+               verbose: bool = False,
+               estimated_start_override: Optional[int] = None) -> Tuple[bool, str]:
     """
     Apply a single hunk to a file.
     Returns (success, message)
@@ -231,18 +233,47 @@ def apply_hunk(file_path: str, hunk: Hunk, dry_run: bool = False, verbose: bool 
     context_after = hunk.get_context_after()
     
     # Try to find where these lines occur in the file
-    estimated_start = max(0, hunk.header.old_start - 1)
+    estimated_start = max(
+        0,
+        estimated_start_override
+        if estimated_start_override is not None
+        else hunk.header.old_start - 1
+    )
     
-    # First try: exact location from hunk header
+    # First try: exact match of the full old hunk text near the estimated
+    # position. This is much more reliable than matching only the leading
+    # context lines when multiple functions share a similar trailer such as
+    # a closing brace and a blank line.
     actual_start = None
-    
-    # Check if we can match starting from estimated position
-    if context_before and old_lines:
+    old_len = len(old_lines)
+
+    if old_lines and estimated_start + old_len <= len(file_lines):
+        if file_lines[estimated_start:estimated_start + old_len] == old_lines:
+            actual_start = estimated_start
+
+    # If not found exactly, search nearby for the full old hunk text.
+    if actual_start is None and old_lines:
+        search_start = max(0, estimated_start - 10)
+        search_end = min(len(file_lines) - old_len + 1, estimated_start + 21)
+        for i in range(search_start, search_end):
+            if file_lines[i:i + old_len] == old_lines:
+                actual_start = i
+                break
+
+    # If still not found, search the whole file for the full old hunk text.
+    if actual_start is None and old_lines:
+        for i in range(0, len(file_lines) - old_len + 1):
+            if file_lines[i:i + old_len] == old_lines:
+                actual_start = i
+                break
+
+    # Fall back to matching leading context if needed.
+    if actual_start is None and context_before:
         context_len = len(context_before)
         if estimated_start >= 0 and estimated_start + context_len <= len(file_lines):
             if file_lines[estimated_start:estimated_start + context_len] == context_before:
                 actual_start = estimated_start
-    
+
     # If not found exactly, search nearby
     if actual_start is None and context_before:
         for i in range(max(0, estimated_start - 10), min(len(file_lines), estimated_start + 20)):
@@ -346,12 +377,17 @@ def apply_file_patch(base_dir: str, file_patch: FilePatch, dry_run: bool = False
         return False, messages
     
     # Apply each hunk
+    line_offset = 0
+
     for i, hunk in enumerate(file_patch.hunks, 1):
-        success, msg = apply_hunk(target_path, hunk, dry_run, verbose)
+        estimated_start = max(0, hunk.header.old_start - 1 + line_offset)
+        success, msg = apply_hunk(target_path, hunk, dry_run, verbose,
+                                  estimated_start_override=estimated_start)
         messages.append(f"  Hunk {i}: {msg}")
         if not success:
             return False, messages
-    
+        line_offset += hunk.header.new_count - hunk.header.old_count
+
     return True, messages
 
 
