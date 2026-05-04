@@ -1,0 +1,98 @@
+diff --git a/src/objnam.c b/src/objnam.c
+index f9bc1749f..c1f77db01 100644
+--- a/src/objnam.c
++++ b/src/objnam.c
+@@ -2,20 +2,24 @@
+ /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
+ /*-Copyright (c) Robert Patrick Rankin, 2011. */
+ /* NetHack may be freely redistributed.  See license for details. */
+ 
+ #include "hack.h"
+ 
+ /* "an uncursed greased partly eaten guardian naga hatchling [corpse]" */
+ #define PREFIX 80 /* (56) */
+ #define SCHAR_LIM 127
+ #define NUMOBUF 12
++#undef OBJ_NAME
++#undef OBJ_DESCR
++#define OBJ_NAME(obj) (tra("object_name", obj_descr[(obj).oc_name_idx].oc_name))
++#define OBJ_DESCR(obj) (tra("object_descr", obj_descr[(obj).oc_descr_idx].oc_descr))
+ 
+ struct _readobjnam_data {
+     struct obj *otmp;
+     char *bp;
+     char *origbp;
+     char oclass;
+     char *un, *dn, *actualn;
+     const char *name;
+     char *p;
+     int cnt, spe, spesgn, typ, very, rechrg;
+@@ -203,21 +207,21 @@ obj_typename(int otyp)
+     char *buf = nextobuf();
+     struct objclass *ocl = &objects[otyp];
+     const char *actualn = OBJ_NAME(*ocl);
+     const char *dn = OBJ_DESCR(*ocl);
+     const char *un = ocl->oc_uname;
+     int nn = ocl->oc_name_known;
+ 
+     if (Role_if(PM_SAMURAI)) {
+         actualn = Japanese_item_name(otyp, actualn);
+         if (otyp == WOODEN_HARP || otyp == MAGIC_HARP)
+-            dn = "koto";
++            dn = tra("object_descr", "koto");
+     }
+     /* generic items don't have an actual-name; we shouldn't ever be called
+        for those; pacify static analyzer without resorting to impossible() */
+     if (!actualn)
+         actualn = (otyp > 0 && otyp < MAXOCLASSES) ? "generic" : "object?";
+ 
+     buf[0] = '\0'; /* redundant */
+     switch (ocl->oc_class) {
+     case COIN_CLASS:
+         return strcpy(buf, actualn); /* "gold piece" */
+@@ -598,21 +602,21 @@ xname_flags(
+     /* set up primary work buffer; the first 'PREFIX' bytes are set
+        aside for use by doname() */
+     buf = gx.xnamep + PREFIX; /* leave room for "17 -3 " */
+     buf_end = gx.xnamep + BUFSZ - 1; /* last byte within the obuf[] */
+     buf[0] = '\0';
+     ConcUpdate(buf); /* set buf_eos and bufspaceleft */
+ 
+     if (Role_if(PM_SAMURAI)) {
+         actualn = Japanese_item_name(typ, actualn);
+         if (typ == WOODEN_HARP || typ == MAGIC_HARP)
+-            dn = "koto";
++            dn = tra("object_descr", "koto");
+     }
+     /* generic items don't have an actual-name; we shouldn't ever be called
+        for those; pacify static analyzer without resorting to impossible() */
+     if (!actualn)
+         actualn = (typ > 0 && typ < MAXOCLASSES) ? "generic" : "object?";
+     /* 3.6.2: this used to be part of 'dn's initialization, but it
+        needs to come after possibly overriding 'actualn' */
+     if (!dn)
+         dn = actualn;
+ 
+@@ -5421,21 +5425,21 @@ rnd_class(int first, int last)
+ const char *
+ Japanese_item_name(int i, const char *ordinaryname)
+ {
+     const struct Jitem *j = Japanese_items;
+ 
+     while (j->item) {
+         if (i == j->item)
+             return j->name;
+         j++;
+     }
+-    return ordinaryname;
++    return tra("object_japanese_name", ordinaryname);
+ }
+ 
+ const char *
+ armor_simple_name(struct obj *armor)
+ {
+     const char *result = 0;
+     unsigned armcat = objects[armor->otyp].oc_armcat;
+ 
+     switch (armcat) {
+     case ARM_SUIT:

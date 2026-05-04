@@ -1,0 +1,133 @@
+diff --git a/src/pline.c b/src/pline.c
+index 49c293195..f1c759eba 100644
+--- a/src/pline.c
++++ b/src/pline.c
+@@ -362,115 +362,115 @@ free_youbuf(void)
+ #define YouMessage(pointer, prefix, text) \
+     strcat((YouPrefix(pointer, prefix, text), pointer), text)
+ 
+ void
+ You(const char *line, ...)
+ {
+     va_list the_args;
+     char *tmp;
+ 
+     va_start(the_args, line);
+-    vpline(YouMessage(tmp, "You ", line), the_args);
++    vpline(YouMessage(tmp, tra("pline_prefix", "You "), line), the_args);
+     va_end(the_args);
+ }
+ 
+ void
+ Your(const char *line, ...)
+ {
+     va_list the_args;
+     char *tmp;
+ 
+     va_start(the_args, line);
+-    vpline(YouMessage(tmp, "Your ", line), the_args);
++    vpline(YouMessage(tmp, tra("pline_prefix", "Your "), line), the_args);
+     va_end(the_args);
+ }
+ 
+ void
+ You_feel(const char *line, ...)
+ {
+     va_list the_args;
+     char *tmp;
+ 
+     va_start(the_args, line);
+     if (Unaware)
+-        YouPrefix(tmp, "You dream that you feel ", line);
++        YouPrefix(tmp, tra("pline_prefix", "You dream that you feel "), line);
+     else
+-        YouPrefix(tmp, "You feel ", line);
++        YouPrefix(tmp, tra("pline_prefix", "You feel "), line);
+     vpline(strcat(tmp, line), the_args);
+     va_end(the_args);
+ }
+ 
+ void
+ You_cant(const char *line, ...)
+ {
+     va_list the_args;
+     char *tmp;
+ 
+     va_start(the_args, line);
+-    vpline(YouMessage(tmp, "You can't ", line), the_args);
++    vpline(YouMessage(tmp, tra("pline_prefix", "You can't "), line), the_args);
+     va_end(the_args);
+ }
+ 
+ void
+ pline_The(const char *line, ...)
+ {
+     va_list the_args;
+     char *tmp;
+ 
+     va_start(the_args, line);
+-    vpline(YouMessage(tmp, "The ", line), the_args);
++    vpline(YouMessage(tmp, tra("pline_prefix", "The "), line), the_args);
+     va_end(the_args);
+ }
+ 
+ void
+ There(const char *line, ...)
+ {
+     va_list the_args;
+     char *tmp;
+ 
+     va_start(the_args, line);
+-    vpline(YouMessage(tmp, "There ", line), the_args);
++    vpline(YouMessage(tmp, tra("pline_prefix", "There "), line), the_args);
+     va_end(the_args);
+ }
+ 
+ void
+ You_hear(const char *line, ...)
+ {
+     va_list the_args;
+     char *tmp;
+ 
+     if ((Deaf && !Unaware) || !flags.acoustics)
+         return;
+     va_start(the_args, line);
+     if (Underwater)
+-        YouPrefix(tmp, "You barely hear ", line);
++        YouPrefix(tmp, tra("pline_prefix", "You barely hear "), line);
+     else if (Unaware)
+-        YouPrefix(tmp, "You dream that you hear ", line);
++        YouPrefix(tmp, tra("pline_prefix", "You dream that you hear "), line);
+     else
+-        YouPrefix(tmp, "You hear ", line);  /* Deaf-aware */
++        YouPrefix(tmp, tra("pline_prefix", "You hear "), line);  /* Deaf-aware */
+     vpline(strcat(tmp, line), the_args);
+     va_end(the_args);
+ }
+ 
+ void
+ You_see(const char *line, ...)
+ {
+     va_list the_args;
+     char *tmp;
+ 
+     va_start(the_args, line);
+     if (Unaware)
+-        YouPrefix(tmp, "You dream that you see ", line);
++        YouPrefix(tmp, tra("pline_prefix", "You dream that you see "), line);
+     else if (Blind) /* caller should have caught this... */
+-        YouPrefix(tmp, "You sense ", line);
++        YouPrefix(tmp, tra("pline_prefix", "You sense "), line);
+     else
+-        YouPrefix(tmp, "You see ", line);
++        YouPrefix(tmp, tra("pline_prefix", "You see "), line);
+     vpline(strcat(tmp, line), the_args);
+     va_end(the_args);
+ }
+ 
+ /* Print a message inside double-quotes.
+  * The caller is responsible for checking deafness.
+  * Gods can speak directly to you in spite of deafness.
+  */
+ void
+ verbalize(const char *line, ...)
