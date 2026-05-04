@@ -270,7 +270,7 @@ index 4dfca4006..cc27ce987 100644
 +    if (nh_tr_hook) {
 +        const char *translated = (*nh_tr_hook)(key, fallback);
 +
-+        if (translated && *translated)
++        if (translated)
 +            return translated;
 +    }
 +
