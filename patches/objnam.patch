@@ -1,5 +1,5 @@
 diff --git a/src/objnam.c b/src/objnam.c
-index f9bc1749f..c1f77db01 100644
+index f9bc1749f..112a40f00 100644
 --- a/src/objnam.c
 +++ b/src/objnam.c
 @@ -2,20 +2,24 @@
@@ -39,7 +39,7 @@ index f9bc1749f..c1f77db01 100644
          actualn = Japanese_item_name(otyp, actualn);
          if (otyp == WOODEN_HARP || otyp == MAGIC_HARP)
 -            dn = "koto";
-+            dn = tra("object_name", "koto");
++            dn = tra("object_japanese_name", "koto");
      }
      /* generic items don't have an actual-name; we shouldn't ever be called
         for those; pacify static analyzer without resorting to impossible() */
@@ -62,7 +62,7 @@ index f9bc1749f..c1f77db01 100644
          actualn = Japanese_item_name(typ, actualn);
          if (typ == WOODEN_HARP || typ == MAGIC_HARP)
 -            dn = "koto";
-+            dn = tra("object_name", "koto");
++            dn = tra("object_japanese_name", "koto");
      }
      /* generic items don't have an actual-name; we shouldn't ever be called
         for those; pacify static analyzer without resorting to impossible() */
@@ -73,7 +73,31 @@ index f9bc1749f..c1f77db01 100644
      if (!dn)
          dn = actualn;
  
-@@ -5421,21 +5425,21 @@ rnd_class(int first, int last)
+@@ -2828,20 +2832,23 @@ singplur_compound(char *str)
+  * genocidable, and vanquished-mon handling does its own special casing
+  * (for uniques who've been revived and re-killed), so we don't bother
+  * trying to get those right here.
+  *
+  * Also misused by muse.c to convert 1st person present verbs to 2nd person.
+  * 3.6.0: made case-insensitive.
+  */
+ char *
+ makeplural(const char *oldstr)
+ {
++    if (nh_tr_hook) {
++        return oldstr;
++    }
+     char *spot;
+     char lo_c, *str = nextobuf();
+     const char *excess = (char *) 0;
+     int len, i;
+ 
+     if (oldstr)
+         while (*oldstr == ' ')
+             oldstr++;
+     if (!oldstr || !*oldstr) {
+         impossible("plural of null?");
+@@ -5421,21 +5428,21 @@ rnd_class(int first, int last)
  const char *
  Japanese_item_name(int i, const char *ordinaryname)
  {
@@ -85,7 +109,7 @@ index f9bc1749f..c1f77db01 100644
          j++;
      }
 -    return ordinaryname;
-+    return tra("object_name", ordinaryname);
++    return tra("object_japanese_name", ordinaryname);
  }
  
  const char *
