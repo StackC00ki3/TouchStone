@@ -1,30 +1,27 @@
 diff --git a/src/do_name.c b/src/do_name.c
-index 75f33815f..34f9f7549 100644
+index 75f33815f..2d9872d7b 100644
 --- a/src/do_name.c
 +++ b/src/do_name.c
-@@ -899,23 +899,23 @@ x_monnam(
-         EHalluc_resistance = save_prop;
-         mtmp->minvis = save_invis;
-         if (article == ARTICLE_NONE && !strncmp(name, "the ", 4))
-             name += 4;
-         return strcpy(buf, name);
+@@ -1297,21 +1297,21 @@ Mgender(struct monst *mtmp)
+         mgender = FEMALE;
      }
+     return mgender;
+ }
  
-     /* 'pm_name' is the base part of most names */
-     if (do_mappear) {
-         /*assert(ismnum(mtmp->mappearance));*/
--        pm_name = pmname(&mons[mtmp->mappearance], Mgender(mtmp));
-+        pm_name = tra("pm_name", pmname(&mons[mtmp->mappearance], Mgender(mtmp)));
-     } else {
--        pm_name = mon_pmname(mtmp);
-+        pm_name = tra("pm_name", mon_pmname(mtmp));
-     }
+ const char *
+ pmname(struct permonst *pm, int mgender)
+ {
+     if (mgender < MALE || mgender >= NUM_MGENDERS || !pm->pmnames[mgender])
+         mgender = NEUTRAL;
+-    return pm->pmnames[mgender];
++    return tra("pm_name", pm->pmnames[mgender]);
+ }
+ #endif /* PMNAME_MACROS */
  
-     /* Shopkeepers: use shopkeeper name.  For normal shopkeepers, just
-      * "Asidonhopo"; for unusual ones, "Asidonhopo the invisible
-      * shopkeeper" or "Asidonhopo the blue dragon".  If hallucinating,
-      * none of this applies.
-      */
-     if (mtmp->isshk && !do_hallu && !do_mappear) {
-         if (adjective && article == ARTICLE_THE) {
-             /* pathological case: "the angry Asidonhopo the blue dragon"
+ /* mons[]->pmname for a monster */
+ const char *
+ mon_pmname(struct monst *mon)
+ {
+     /* for neuter, mon->data->pmnames[MALE] will be Null and use [NEUTRAL] */
+     return pmname(mon->data, Mgender(mon));
+ }

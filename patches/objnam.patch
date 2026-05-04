@@ -16,7 +16,7 @@ index f9bc1749f..c1f77db01 100644
 +#undef OBJ_NAME
 +#undef OBJ_DESCR
 +#define OBJ_NAME(obj) (tra("object_name", obj_descr[(obj).oc_name_idx].oc_name))
-+#define OBJ_DESCR(obj) (tra("object_descr", obj_descr[(obj).oc_descr_idx].oc_descr))
++#define OBJ_DESCR(obj) (tra("object_name", obj_descr[(obj).oc_descr_idx].oc_descr))
  
  struct _readobjnam_data {
      struct obj *otmp;
@@ -39,7 +39,7 @@ index f9bc1749f..c1f77db01 100644
          actualn = Japanese_item_name(otyp, actualn);
          if (otyp == WOODEN_HARP || otyp == MAGIC_HARP)
 -            dn = "koto";
-+            dn = tra("object_descr", "koto");
++            dn = tra("object_name", "koto");
      }
      /* generic items don't have an actual-name; we shouldn't ever be called
         for those; pacify static analyzer without resorting to impossible() */
@@ -62,7 +62,7 @@ index f9bc1749f..c1f77db01 100644
          actualn = Japanese_item_name(typ, actualn);
          if (typ == WOODEN_HARP || typ == MAGIC_HARP)
 -            dn = "koto";
-+            dn = tra("object_descr", "koto");
++            dn = tra("object_name", "koto");
      }
      /* generic items don't have an actual-name; we shouldn't ever be called
         for those; pacify static analyzer without resorting to impossible() */
@@ -85,7 +85,7 @@ index f9bc1749f..c1f77db01 100644
          j++;
      }
 -    return ordinaryname;
-+    return tra("object_japanese_name", ordinaryname);
++    return tra("object_name", ordinaryname);
  }
  
  const char *
