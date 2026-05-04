@@ -79558,9 +79558,9 @@
         "burnt "
       ],
       "zh": [
-        "生锈的 ",
-        "破裂的 ",
-        "烧焦的 "
+        "生锈的",
+        "破裂的",
+        "烧焦的"
       ]
     },
     "strcat:src/objnam.c:add_erosion_words:4": {
@@ -79652,7 +79652,7 @@
         "cursed "
       ],
       "zh": [
-        "空的"
+        "诅咒的"
       ]
     },
     "strcat:src/objnam.c:doname_base:7": {
@@ -79665,7 +79665,7 @@
         "blessed "
       ],
       "zh": [
-        "被诅咒的 "
+        "被祝福的 "
       ]
     },
     "strcat:src/objnam.c:doname_base:8": {
@@ -79678,7 +79678,7 @@
         "uncursed "
       ],
       "zh": [
-        "受祝福的 "
+        "未诅咒的 "
       ]
     },
     "strcat:src/objnam.c:doname_base:9": {
@@ -79704,7 +79704,7 @@
         "broken "
       ],
       "zh": [
-        "未诅咒的 "
+        "坏锁的"
       ]
     },
     "strcat:src/objnam.c:doname_base:11": {
@@ -79717,7 +79717,7 @@
         "locked "
       ],
       "zh": [
-        "坏锁的"
+        "上锁的"
       ]
     },
     "strcat:src/objnam.c:doname_base:12": {
@@ -79730,7 +79730,7 @@
         "unlocked "
       ],
       "zh": [
-        "上锁的"
+        "未锁的"
       ]
     },
     "strcat:src/objnam.c:doname_base:13": {
@@ -79743,7 +79743,7 @@
         "greased "
       ],
       "zh": [
-        "未锁的"
+        "上油的"
       ]
     },
     "strcat:src/objnam.c:doname_base:14": {
@@ -79769,7 +79769,7 @@
         "partly used "
       ],
       "zh": [
-        "部分使用的 "
+        "部分使用的"
       ]
     },
     "strcat:src/objnam.c:doname_base:19": {
@@ -79782,7 +79782,7 @@
         "partly eaten "
       ],
       "zh": [
-        " "
+        "部分食用的"
       ]
     },
     "strcat:src/objnam.c:doname_base:21": {
@@ -79808,7 +79808,7 @@
         "the "
       ],
       "zh": [
-        "这个 "
+        ""
       ]
     },
     "strcat:src/objnam.c:corpse_xname:4": {
@@ -79951,7 +79951,7 @@
         "closed "
       ],
       "zh": [
-        "关闭的 "
+        "关闭的"
       ]
     },
     "strcat:src/objnam.c:wizterrainwish:19": {
@@ -79964,7 +79964,7 @@
         "open "
       ],
       "zh": [
-        "开着的 "
+        "开着的"
       ]
     },
     "strcat:src/objnam.c:wizterrainwish:20": {
@@ -79977,7 +79977,7 @@
         "broken "
       ],
       "zh": [
-        "未诅咒的 "
+        "坏锁的"
       ]
     },
     "strcat:src/objnam.c:wizterrainwish:21": {
