@@ -126,6 +126,8 @@ index 1de3db042..5250a56db 100644
 +
 +#undef DrawText
 +#define DrawText DrawTextA_UTF8
++#undef DrawTextA
++#define DrawTextA DrawTextA_UTF8
 +#undef ListView_InsertColumn
 +#define ListView_InsertColumn ListView_InsertColumn_UTF8
  #endif /* WINMS_H */
