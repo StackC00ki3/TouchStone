@@ -45,7 +45,8 @@ CALL_RULES = {
     'add_menu': CallRule('add_menu', text_arg_index=7),
 }
 
-DB_BUCKETS = tuple(dict.fromkeys(rule.bucket for rule in CALL_RULES.values()))
+ASSIGN_BUCKET = 'assign'
+DB_BUCKETS = tuple(dict.fromkeys([*(rule.bucket for rule in CALL_RULES.values()), ASSIGN_BUCKET]))
 
 
 class NetHackScanner:
@@ -56,6 +57,7 @@ class NetHackScanner:
         self.db: Dict[str, Dict[str, Dict[str, Any]]] = {bucket: {} for bucket in DB_BUCKETS}
         # 跟踪函数内字符串出现次数: { "filename:funcname": count }
         self.occurrence_tracker: DefaultDict[str, int] = defaultdict(int)
+        self.assignment_occurrence_tracker: DefaultDict[str, int] = defaultdict(int)
         self._file_lines: Dict[str, List[str]] = {}
         self._file_bytes: Dict[str, bytes] = {}
         self._current_func = 'global'
@@ -158,6 +160,22 @@ class NetHackScanner:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             self._file_lines[file_path] = f.readlines()
 
+    @staticmethod
+    def _cursor_is_in_file(cursor, file_path: str) -> bool:
+        loc = cursor.location
+        return bool(loc and loc.file and os.path.normpath(str(loc.file)) == os.path.normpath(file_path))
+
+    @staticmethod
+    def _is_probably_c_string_type(type_spelling: str) -> bool:
+        normalized = ''.join(type_spelling.split())
+        return 'char' in normalized and ('*' in normalized or '[' in normalized)
+
+    @staticmethod
+    def _is_simple_assignment(cursor) -> bool:
+        if cursor.kind != clang.cindex.CursorKind.BINARY_OPERATOR:
+            return False
+        return any(tok.spelling == '=' for tok in cursor.get_tokens())
+
     def scan_file(self, file_path: str) -> None:
         # 模拟编译参数，确保 libclang 能找到头文件
         tu = self.index.parse(file_path, args=self._parse_args())
@@ -176,6 +194,13 @@ class NetHackScanner:
         # Context ID: bucket+文件函数键+出现次数
         ctx_seed = f"{func_name}:{occ_key}:{idx}"
         ctx_id = ctx_seed
+        return idx, ctx_id
+
+    def _new_assignment_ctx(self, rel_path: str) -> Tuple[int, str]:
+        occ_key = f"{rel_path}:{self._current_func}"
+        self.assignment_occurrence_tracker[occ_key] += 1
+        idx = self.assignment_occurrence_tracker[occ_key]
+        ctx_id = f"{ASSIGN_BUCKET}:{occ_key}:{idx}"
         return idx, ctx_id
 
     def _collect_extra_string_args(self, call_args: Sequence[Any], start_idx: int, file_path: str) -> List[Dict[str, Any]]:
@@ -217,6 +242,48 @@ class NetHackScanner:
 
         self.db[rule.bucket][ctx_id] = entry
 
+    def _record_assignment(self, cursor, file_path: str, source_node, target_name: str) -> None:
+        if not self._cursor_is_in_file(cursor, file_path):
+            return
+
+        raw_texts = self.get_string_literals(source_node, file_path=file_path)
+        if not raw_texts:
+            return
+
+        rel_path = os.path.relpath(file_path, self.project_root).replace('\\', '/')
+        idx, ctx_id = self._new_assignment_ctx(rel_path)
+        self.db[ASSIGN_BUCKET][ctx_id] = {
+            'file': rel_path,
+            'line': cursor.location.line,
+            'col': cursor.location.column,
+            'func': self._current_func,
+            'occ': idx,
+            'target': target_name,
+            self.lang: raw_texts,
+        }
+
+    def _maybe_record_string_assignment(self, cursor, file_path: str) -> None:
+        if not self._cursor_is_in_file(cursor, file_path):
+            return
+        if not self._is_probably_c_string_type(cursor.type.spelling):
+            return
+
+        if cursor.kind == clang.cindex.CursorKind.VAR_DECL:
+            raw_texts = self.get_string_literals(cursor, file_path=file_path)
+            if raw_texts:
+                self._record_assignment(cursor, file_path, cursor, cursor.spelling or '')
+            return
+
+        if cursor.kind != clang.cindex.CursorKind.BINARY_OPERATOR or not self._is_simple_assignment(cursor):
+            return
+
+        children = list(cursor.get_children())
+        if len(children) < 2:
+            return
+
+        target_name = self._find_first_named_descendant(children[0]) or ''
+        self._record_assignment(cursor, file_path, children[1], target_name)
+
     def _scan_cursor(self, cursor, file_path: str) -> None:
         # 1. 更新当前函数名
         if cursor.kind == clang.cindex.CursorKind.FUNCTION_DECL:
@@ -228,6 +295,9 @@ class NetHackScanner:
             rule = CALL_RULES.get(callee)
             if rule:
                 self._record_call(cursor, file_path, rule)
+
+        if cursor.kind in (clang.cindex.CursorKind.VAR_DECL, clang.cindex.CursorKind.BINARY_OPERATOR):
+            self._maybe_record_string_assignment(cursor, file_path)
 
         # 递归遍历子节点
         for child in cursor.get_children():
