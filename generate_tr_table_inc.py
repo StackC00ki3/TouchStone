@@ -27,12 +27,11 @@ def c_escape(s: str) -> str:
     )
 
 
-def add_if_nonempty(rows: dict[str, str], key: str, value: Any) -> None:
+def add_if_translated(rows: dict[str, str], key: str, source: Any, value: Any) -> None:
     if not isinstance(value, str):
         return
-    if not value:
-        return
-    rows[key] = value
+    if value or (isinstance(source, str) and source):
+        rows[key] = value
 
 
 def build_rows(data: dict[str, Any]) -> list[tuple[str, str]]:
@@ -46,10 +45,12 @@ def build_rows(data: dict[str, Any]) -> list[tuple[str, str]]:
             if not isinstance(entry, dict):
                 continue
 
+            en_list = entry.get("en")
             zh_list = entry.get("zh")
             if isinstance(zh_list, list):
                 for i, txt in enumerate(zh_list):
-                    add_if_nonempty(by_key, f"{digest}:en:{i}", txt)
+                    src = en_list[i] if isinstance(en_list, list) and i < len(en_list) else None
+                    add_if_translated(by_key, f"{digest}:en:{i}", src, txt)
 
             args = entry.get("args")
             if isinstance(args, list):
@@ -57,11 +58,13 @@ def build_rows(data: dict[str, Any]) -> list[tuple[str, str]]:
                     if not isinstance(arg, dict):
                         continue
                     idx = arg.get("idx")
+                    en_arg = arg.get("en")
                     zh_arg = arg.get("zh")
                     if not isinstance(idx, int) or not isinstance(zh_arg, list):
                         continue
                     for j, txt in enumerate(zh_arg):
-                        add_if_nonempty(by_key, f"{digest}:arg:{idx}:{j}", txt)
+                        src = en_arg[j] if isinstance(en_arg, list) and j < len(en_arg) else None
+                        add_if_translated(by_key, f"{digest}:arg:{idx}:{j}", src, txt)
 
     return sorted(by_key.items(), key=lambda kv: c_escape(kv[0]))
 
@@ -71,7 +74,7 @@ def main() -> int:
     parser.add_argument(
         "-i",
         "--input",
-        default="nethack_strings_translated_export.json",
+        default="nethack_strings_translated.json",
         help="Input merged json path",
     )
     parser.add_argument(

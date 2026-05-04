@@ -1,4 +1,4 @@
-#include "../include/mod_api.h"
+#include "mod_api.h"
 
 #include <string.h>
 
@@ -8,7 +8,7 @@ struct tr_static_entry {
 };
 
 static const struct tr_static_entry tr_table_data[] = {
-#include "../src/tr_table_data.inc"
+#include "tr_table_data.inc"
 };
 
 #define TR_TABLE_COUNT ((int) (sizeof tr_table_data / sizeof tr_table_data[0]))
@@ -27,7 +27,7 @@ tr_lookup(const char *key, const char *fallback)
 
         if (cmp == 0) {
             const char *v = tr_table_data[mid].value;
-            return (v && *v) ? v : fallback;
+            return v ? v : fallback;
         }
         if (cmp < 0)
             hi = mid - 1;
