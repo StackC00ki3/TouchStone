@@ -30,7 +30,7 @@ clang -dynamiclib -Iinclude -o mods/tr_plugin.dylib mods/tr_plugin.c
 Windows (MinGW) example:
 
 ```bash
-gcc -shared -Iinclude -o mods/tr_plugin.dll mods/tr_plugin.c
+gcc -shared -o tr_plugin.dll .\tr_plugin.c -ldbghelp
 ```
 
 When a translation plugin is present, the core `tr()` function will use it.
