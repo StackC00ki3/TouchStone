@@ -1,5 +1,5 @@
 diff --git a/src/objnam.c b/src/objnam.c
-index f9bc1749f..112a40f00 100644
+index f9bc1749f..97b779bbc 100644
 --- a/src/objnam.c
 +++ b/src/objnam.c
 @@ -2,20 +2,24 @@
@@ -27,53 +27,7 @@ index f9bc1749f..112a40f00 100644
      const char *name;
      char *p;
      int cnt, spe, spesgn, typ, very, rechrg;
-@@ -203,21 +207,21 @@ obj_typename(int otyp)
-     char *buf = nextobuf();
-     struct objclass *ocl = &objects[otyp];
-     const char *actualn = OBJ_NAME(*ocl);
-     const char *dn = OBJ_DESCR(*ocl);
-     const char *un = ocl->oc_uname;
-     int nn = ocl->oc_name_known;
- 
-     if (Role_if(PM_SAMURAI)) {
-         actualn = Japanese_item_name(otyp, actualn);
-         if (otyp == WOODEN_HARP || otyp == MAGIC_HARP)
--            dn = "koto";
-+            dn = tra("object_japanese_name", "koto");
-     }
-     /* generic items don't have an actual-name; we shouldn't ever be called
-        for those; pacify static analyzer without resorting to impossible() */
-     if (!actualn)
-         actualn = (otyp > 0 && otyp < MAXOCLASSES) ? "generic" : "object?";
- 
-     buf[0] = '\0'; /* redundant */
-     switch (ocl->oc_class) {
-     case COIN_CLASS:
-         return strcpy(buf, actualn); /* "gold piece" */
-@@ -598,21 +602,21 @@ xname_flags(
-     /* set up primary work buffer; the first 'PREFIX' bytes are set
-        aside for use by doname() */
-     buf = gx.xnamep + PREFIX; /* leave room for "17 -3 " */
-     buf_end = gx.xnamep + BUFSZ - 1; /* last byte within the obuf[] */
-     buf[0] = '\0';
-     ConcUpdate(buf); /* set buf_eos and bufspaceleft */
- 
-     if (Role_if(PM_SAMURAI)) {
-         actualn = Japanese_item_name(typ, actualn);
-         if (typ == WOODEN_HARP || typ == MAGIC_HARP)
--            dn = "koto";
-+            dn = tra("object_japanese_name", "koto");
-     }
-     /* generic items don't have an actual-name; we shouldn't ever be called
-        for those; pacify static analyzer without resorting to impossible() */
-     if (!actualn)
-         actualn = (typ > 0 && typ < MAXOCLASSES) ? "generic" : "object?";
-     /* 3.6.2: this used to be part of 'dn's initialization, but it
-        needs to come after possibly overriding 'actualn' */
-     if (!dn)
-         dn = actualn;
- 
-@@ -2828,20 +2832,23 @@ singplur_compound(char *str)
+@@ -2828,20 +2832,21 @@ singplur_compound(char *str)
   * genocidable, and vanquished-mon handling does its own special casing
   * (for uniques who've been revived and re-killed), so we don't bother
   * trying to get those right here.
@@ -84,9 +38,7 @@ index f9bc1749f..112a40f00 100644
  char *
  makeplural(const char *oldstr)
  {
-+    if (nh_tr_hook) {
-+        return oldstr;
-+    }
++    return oldstr;
      char *spot;
      char lo_c, *str = nextobuf();
      const char *excess = (char *) 0;
@@ -97,7 +49,7 @@ index f9bc1749f..112a40f00 100644
              oldstr++;
      if (!oldstr || !*oldstr) {
          impossible("plural of null?");
-@@ -5421,21 +5428,21 @@ rnd_class(int first, int last)
+@@ -5421,21 +5426,21 @@ rnd_class(int first, int last)
  const char *
  Japanese_item_name(int i, const char *ordinaryname)
  {
